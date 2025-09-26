@@ -113,6 +113,22 @@ def normalize_ext_list(raw: str):
     return out
 
 
+def make_case_insensitive_glob_for_extension(ext: str) -> str:
+    """
+    Build a case-insensitive glob for an extension token.
+    Example: "jpg" -> "*.[jJ][pP][gG]"
+    """
+    if not ext:
+        return "*.*"
+    parts = []
+    for ch in ext:
+        if ch.isalpha():
+            parts.append(f"[{ch.lower()}{ch.upper()}]")
+        else:
+            parts.append(ch)
+    return f"*.{''.join(parts)}"
+
+
 def abspath(p: str) -> str:
     return os.path.abspath(os.path.expanduser(p))
 
@@ -357,7 +373,7 @@ class BackupApp(tk.Tk):
         # Exclude extensions
         exts = normalize_ext_list(self.ext_var.get())
         for ext in exts:
-            pattern = f"*.{ext}"
+            pattern = make_case_insensitive_glob_for_extension(ext)
             cmd += ["--exclude", pattern]
 
         cmd += [src_with_slash, dst]
