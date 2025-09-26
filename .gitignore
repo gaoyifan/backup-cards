@@ -1,0 +1,52 @@
+# macOS
+.DS_Store
+
+# Python bytecode and extensions
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging/build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+MANIFEST
+
+# PyInstaller
+*.spec
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.pytype/
+.hypothesis/
+.cache/
+pip-wheel-metadata/
+pip-log.txt
+.coverage
+.coverage.*
+coverage.xml
+
+# IDE/editor
+.idea/
+.vscode/
+*.iml
+
+# Logs
+*.log
+
+# pyenv
+.python-version
+
