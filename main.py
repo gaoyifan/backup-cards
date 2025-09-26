@@ -298,13 +298,27 @@ class BackupApp(tk.Tk):
         except Exception:
             os._exit(0)
 
+    def _resolve_initial_dir(self, current_value: str) -> str:
+        try:
+            path = (current_value or "").strip()
+        except Exception:
+            path = ""
+        if path and os.path.isdir(path):
+            return path
+        volumes = "/Volumes"
+        if os.path.isdir(volumes):
+            return volumes
+        return os.path.expanduser("~")
+
     def _pick_src(self):
-        p = filedialog.askdirectory(title="Choose Source Directory")
+        init_dir = self._resolve_initial_dir(self.src_var.get())
+        p = filedialog.askdirectory(title="Choose Source Directory", initialdir=init_dir)
         if p:
             self.src_var.set(p)
 
     def _pick_dst(self):
-        p = filedialog.askdirectory(title="Choose Target Directory")
+        init_dir = self._resolve_initial_dir(self.dst_var.get())
+        p = filedialog.askdirectory(title="Choose Target Directory", initialdir=init_dir)
         if p:
             self.dst_var.set(p)
 
