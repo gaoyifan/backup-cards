@@ -20,7 +20,7 @@ setup:
 
 # Build macOS .app bundle with PyInstaller
 build:
-	uv run pyinstaller --windowed --name "{{app_name}}" --osx-bundle-identifier {{bundle_id}} --add-data "README.md:README.md" main.py
+	uv run pyinstaller --windowed --name "{{app_name}}" --osx-bundle-identifier {{bundle_id}} --add-data "README.md:README.md" --noconfirm main.py
 
 # Open the built .app in Finder
 open-app:
