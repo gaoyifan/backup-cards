@@ -9,6 +9,8 @@ Backup Cards GUI (macOS-friendly)
 - Live rsync output during backup
 - Backup button
 
+- Remembers last used settings between launches
+
 Requires: Python 3 (tkinter included on macOS), rsync available on PATH.
 Tip: macOS ships an older rsync. For speed/new features you can install a newer one via Homebrew.
 """
@@ -20,12 +22,55 @@ import threading
 import subprocess
 import queue
 import time
+import json
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 
 APP_TITLE = "Backup Cards (rsync)"
 SENTINEL_DONE = "__RSYNC_DONE__"
+APP_NAME = "Backup Cards"
+
+
+APP_SUPPORT_DIR = os.path.join(
+    os.path.expanduser("~/Library/Application Support"), APP_NAME
+)
+CONFIG_FILE = "config.json"
+
+
+def get_config_path() -> str:
+    try:
+        os.makedirs(APP_SUPPORT_DIR, exist_ok=True)
+    except Exception:
+        # Best-effort directory creation; fall back to user home if it fails
+        pass
+    return os.path.join(APP_SUPPORT_DIR, CONFIG_FILE)
+
+
+def load_settings() -> dict:
+    path = get_config_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
+    return {}
+
+
+def save_settings(settings: dict) -> None:
+    path = get_config_path()
+    try:
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except Exception:
+        # Best-effort save; ignore failures
+        pass
 
 
 def find_rsync() -> str:
@@ -93,8 +138,13 @@ class BackupApp(tk.Tk):
         self.rsync_path = find_rsync()
         self.process = None
         self.is_running = False
+        self._save_job = None
+        self.settings = load_settings()
 
         self._build_ui()
+        self._apply_settings(self.settings)
+        self._bind_autosave()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self):
         pad = {"padx": 10, "pady": 8}
@@ -170,6 +220,68 @@ class BackupApp(tk.Tk):
             foreground="green" if self.rsync_path else "red",
         )
         self.rsync_label.pack(side="left")
+
+    def _apply_settings(self, settings: dict):
+        if not isinstance(settings, dict):
+            return
+        src = settings.get("source")
+        dst = settings.get("target")
+        exts = settings.get("exclude_exts")
+        geom = settings.get("geometry")
+        if isinstance(src, str):
+            self.src_var.set(src)
+        if isinstance(dst, str):
+            self.dst_var.set(dst)
+        if isinstance(exts, str):
+            self.ext_var.set(exts)
+        if isinstance(geom, str):
+            try:
+                self.geometry(geom)
+            except Exception:
+                pass
+
+    def _bind_autosave(self):
+        # Save when fields change, debounced to avoid excessive writes
+        def cb(*_):
+            self._on_field_change()
+
+        self.src_var.trace_add("write", lambda *_: cb())
+        self.dst_var.trace_add("write", lambda *_: cb())
+        self.ext_var.trace_add("write", lambda *_: cb())
+
+    def _gather_settings(self) -> dict:
+        return {
+            "source": self.src_var.get().strip(),
+            "target": self.dst_var.get().strip(),
+            "exclude_exts": self.ext_var.get().strip(),
+            "geometry": self.geometry(),
+        }
+
+    def _on_field_change(self):
+        if self._save_job is not None:
+            try:
+                self.after_cancel(self._save_job)
+            except Exception:
+                pass
+            self._save_job = None
+        self._save_job = self.after(600, self._save_settings_now)
+
+    def _save_settings_now(self):
+        self._save_job = None
+        try:
+            save_settings(self._gather_settings())
+        except Exception:
+            pass
+
+    def _on_close(self):
+        try:
+            save_settings(self._gather_settings())
+        except Exception:
+            pass
+        try:
+            self.destroy()
+        except Exception:
+            os._exit(0)
 
     def _pick_src(self):
         p = filedialog.askdirectory(title="Choose Source Directory")
