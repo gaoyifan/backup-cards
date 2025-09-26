@@ -27,7 +27,6 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 
-APP_TITLE = "Backup Cards (rsync)"
 SENTINEL_DONE = "__RSYNC_DONE__"
 APP_NAME = "Backup Cards"
 
@@ -143,7 +142,7 @@ def is_subpath(child: str, parent: str) -> bool:
 class BackupApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(APP_TITLE)
+        self.title(APP_NAME)
         # Nice default size; Menlo is standard on macOS
         self.geometry("820x560")
         self.minsize(740, 480)
@@ -221,7 +220,7 @@ class BackupApp(tk.Tk):
         self.output.pack(fill="both", expand=True)
         self.output.insert(
             "end",
-            f"{APP_TITLE}\n"
+            f"{APP_NAME}\n"
             "— Select a source and target, optionally enter extensions to EXCLUDE,\n"
             "  then click Backup to start rsync.\n\n",
         )
