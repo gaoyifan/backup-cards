@@ -1,4 +1,4 @@
-# Backup Cards (rsync)
+# Backup Cards
 
 A simple macOS-friendly GUI to back up files with `rsync`.
 
@@ -6,6 +6,10 @@ A simple macOS-friendly GUI to back up files with `rsync`.
 - Optionally exclude files by extension (case-insensitive)
 - See live `rsync` output while copying
 - Remembers your last settings between launches
+
+## Screenshot
+
+![screenshot](screenshot.png)
 
 ## Requirements
 - macOS with Python 3 (Tkinter included by default)
