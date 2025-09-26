@@ -1,7 +1,7 @@
 [project]
-name = "sd-backup"
+name = "backup-cards"
 version = "0.1.0"
-description = "Add your description here"
+description = "Backup Cards"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
