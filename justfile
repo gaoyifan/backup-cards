@@ -44,10 +44,3 @@ clean:
 
 # Clean and then build
 rebuild: clean build
-
-# Quick environment checks
-doctor:
-	set -x
-	python3 --version
-	uv --version
-	if command -v /opt/homebrew/bin/rsync >/dev/null 2>&1; then echo "rsync: /opt/homebrew/bin/rsync"; elif command -v /usr/local/bin/rsync >/dev/null 2>&1; then echo "rsync: /usr/local/bin/rsync"; elif command -v rsync >/dev/null 2>&1; then echo "rsync: $(command -v rsync)"; else echo "rsync: NOT FOUND"; fi

@@ -25,7 +25,7 @@ Using `uv` (recommended):
 
 ```bash
 uv sync
-uv run python3 main.py
+uv run main.py
 ```
 
 The UI runs in a native pywebview window (no external browser required). NiceGUI automatically picks an open port for the embedded server.
@@ -45,15 +45,6 @@ Build with PyInstaller (already configured by `justfile`):
 just build
 # Result: dist/Backup Cards.app
 just open-app
-```
-
-Equivalent raw command:
-
-```bash
-uv run pyinstaller --windowed --name "Backup Cards" \
-  --osx-bundle-identifier com.example.backupcards \
-  --add-data "README.md:README.md" \
-  main.py
 ```
 
 First launch may be blocked by Gatekeeper. Right-click the app → Open to bypass.
@@ -87,5 +78,4 @@ just build      # build macOS .app (PyInstaller)
 just open-app   # open the built app in Finder
 just clean      # remove build artifacts
 just rebuild    # clean then build
-just doctor     # show versions and find rsync
 ```
