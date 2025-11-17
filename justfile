@@ -20,7 +20,14 @@ setup:
 
 # Build macOS .app bundle with PyInstaller
 build:
-	uv run pyinstaller --windowed --name "{{app_name}}" --osx-bundle-identifier {{bundle_id}} --add-data "README.md:README.md" --noconfirm main.py
+	uv run pyinstaller \
+		--windowed \
+		--name "{{app_name}}" \
+		--osx-bundle-identifier {{bundle_id}} \
+		--collect-all nicegui \
+		--collect-all pywebview \
+		--noconfirm \
+		main.py
 
 # Open the built .app in Finder
 open-app:
@@ -28,7 +35,7 @@ open-app:
 
 # Run the GUI directly via Python
 run:
-	uv run python3 main.py
+	uv run main.py
 
 # Remove build artifacts
 clean:
@@ -44,4 +51,3 @@ doctor:
 	python3 --version
 	uv --version
 	if command -v /opt/homebrew/bin/rsync >/dev/null 2>&1; then echo "rsync: /opt/homebrew/bin/rsync"; elif command -v /usr/local/bin/rsync >/dev/null 2>&1; then echo "rsync: /usr/local/bin/rsync"; elif command -v rsync >/dev/null 2>&1; then echo "rsync: $(command -v rsync)"; else echo "rsync: NOT FOUND"; fi
-

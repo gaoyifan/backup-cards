@@ -1,6 +1,6 @@
 # Backup Cards
 
-A simple macOS-friendly GUI to back up files with `rsync`.
+A NiceGUI-based macOS-friendly interface for running `rsync` backups.
 
 - Select a source and target directory
 - Optionally exclude files by extension (case-insensitive)
@@ -12,7 +12,9 @@ A simple macOS-friendly GUI to back up files with `rsync`.
 ![screenshot](screenshot.png)
 
 ## Requirements
-- macOS with Python 3 (Tkinter included by default)
+- Python 3.12+
+- [`nicegui`](https://nicegui.io/) (installed automatically via `uv sync`)
+- [`pywebview`](https://pywebview.flowrl.com/) (installed automatically; powers the native window)
 - `rsync` available on PATH
   - macOS ships an older `rsync`. For best performance/features, install via Homebrew:
     - Apple Silicon: `brew install rsync` (usually `/opt/homebrew/bin/rsync`)
@@ -25,6 +27,8 @@ Using `uv` (recommended):
 uv sync
 uv run python3 main.py
 ```
+
+The UI runs in a native pywebview window (no external browser required). NiceGUI automatically picks an open port for the embedded server.
 
 or with Just:
 
@@ -59,18 +63,20 @@ First launch may be blocked by Gatekeeper. Right-click the app → Open to bypas
 - Exclusion is case-insensitive. Example input `jpg` produces `*.[jJ][pP][gG]`.
 - The app copies the contents of the source directory (uses a trailing slash) into the target.
 - Live output is streamed from `rsync`'s stdout.
+- Directory pickers are implemented with a simple in-app browser so no additional native toolkits are required.
+- Native mode uses `pywebview`, so the app behaves like a desktop application rather than a website.
 
 ## Settings persistence
 Settings are stored in a per-user config file:
 
 - Path: `~/Library/Application Support/Backup Cards/config.json`
-- Saved fields: `source`, `target`, `exclude_exts`, window `geometry`
-- Auto-saves on field change (debounced) and on window close
+- Saved fields: `source`, `target`, `exclude_exts`
+- Auto-saves on field change (debounced) and on shutdown
 
 ## Troubleshooting
 - "rsync not found": install Homebrew `rsync` or ensure it’s on your PATH
 - Slow transfers with the built-in rsync: install a newer rsync via Homebrew
-- GUI won’t open: ensure Python/Tk are available; try `uv run python3 main.py`
+- GUI won’t open: ensure Python/NiceGUI/pywebview are available; try `uv run python3 main.py` again so the native window can be created
 
 ## Project tasks (Just)
 ```bash

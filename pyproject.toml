@@ -4,7 +4,10 @@ version = "1.0.0"
 description = "Backup Cards"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "nicegui>=2.1.0",
+    "pywebview>=5.0.0",
+]
 
 [dependency-groups]
 dev = [

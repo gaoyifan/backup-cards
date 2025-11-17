@@ -1,47 +1,41 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
-"""
-Backup Cards GUI (macOS-friendly)
-- Select source directory
-- Select target directory
-- Exclusive extension filtering (exclude by file extension)
-- Live rsync output during backup
-- Backup button
+"""Backup Cards GUI implemented with NiceGUI."""
 
-- Remembers last used settings between launches
+from __future__ import annotations
 
-Requires: Python 3 (tkinter included on macOS), rsync available on PATH.
-Tip: macOS ships an older rsync. For speed/new features you can install a newer one via Homebrew.
-"""
-
+import asyncio
+import json
 import os
+import queue
 import shlex
 import shutil
-import threading
 import subprocess
-import queue
+import threading
 import time
-import json
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from tkinter.scrolledtext import ScrolledText
+from pathlib import Path
+from typing import Callable, Optional, Tuple
 
-SENTINEL_DONE = "__RSYNC_DONE__"
+from nicegui import app, ui
+
+try:
+    import webview  # type: ignore
+except Exception:  # pragma: no cover - optional dependency is guaranteed in prod but keep safety
+    webview = None
+
 APP_NAME = "Backup Cards"
-
-
+SENTINEL_DONE = "__RSYNC_DONE__"
 APP_SUPPORT_DIR = os.path.join(
     os.path.expanduser("~/Library/Application Support"), APP_NAME
 )
 CONFIG_FILE = "config.json"
+SAVE_DEBOUNCE_SECONDS = 0.6
 
 
 def get_config_path() -> str:
     try:
         os.makedirs(APP_SUPPORT_DIR, exist_ok=True)
     except Exception:
-        # Best-effort directory creation; fall back to user home if it fails
         pass
     return os.path.join(APP_SUPPORT_DIR, CONFIG_FILE)
 
@@ -49,10 +43,10 @@ def get_config_path() -> str:
 def load_settings() -> dict:
     path = get_config_path()
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, dict):
-                return data
+        with open(path, "r", encoding="utf-8") as fh:
+            obj = json.load(fh)
+            if isinstance(obj, dict):
+                return obj
     except FileNotFoundError:
         return {}
     except Exception:
@@ -64,62 +58,50 @@ def save_settings(settings: dict) -> None:
     path = get_config_path()
     try:
         tmp_path = path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
+        with open(tmp_path, "w", encoding="utf-8") as fh:
+            json.dump(settings, fh, ensure_ascii=False, indent=2)
         os.replace(tmp_path, path)
     except Exception:
-        # Best-effort save; ignore failures
         pass
 
 
 def find_rsync() -> str:
-    # Prefer homebrew rsync; fall back to PATH.
     candidates = [
-        "/usr/local/bin/rsync",    # Homebrew (Intel)
-        "/opt/homebrew/bin/rsync", # Homebrew (Apple Silicon)
-        "/usr/bin/rsync",          # macOS built-in (older)
-        shutil.which("rsync"),     # PATH
+        "/usr/local/bin/rsync",
+        "/opt/homebrew/bin/rsync",
+        "/usr/bin/rsync",
+        shutil.which("rsync"),
     ]
-    for c in candidates:
-        if c and os.path.exists(c):
-            return c
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
     return ""
 
 
-def normalize_ext_list(raw: str):
-    """
-    Convert user text like '.tmp, .bak;log  JPG' -> ['tmp','bak','log','JPG']
-    Empty/invalid tokens are ignored.
-    """
+def normalize_ext_list(raw: str) -> list[str]:
     if not raw:
         return []
-    seps = [',', ';', ' ']
     text = raw
-    for s in seps:
-        text = text.replace(s, ',')
-    tokens = [t.strip() for t in text.split(',')]
-    out = []
-    for t in tokens:
-        if not t:
+    for sep in [",", ";", " "]:
+        text = text.replace(sep, ",")
+    tokens = [token.strip() for token in text.split(",")]
+    out: list[str] = []
+    for token in tokens:
+        if not token:
             continue
-        if t.startswith("*."):
-            t = t[2:]
-        if t.startswith("."):
-            t = t[1:]
-        # keep case as typed; rsync pattern matching is case-sensitive
-        if t:
-            out.append(t)
+        if token.startswith("*."):
+            token = token[2:]
+        if token.startswith("."):
+            token = token[1:]
+        if token:
+            out.append(token)
     return out
 
 
 def make_case_insensitive_glob_for_extension(ext: str) -> str:
-    """
-    Build a case-insensitive glob for an extension token.
-    Example: "jpg" -> "*.[jJ][pP][gG]"
-    """
     if not ext:
         return "*.*"
-    parts = []
+    parts: list[str] = []
     for ch in ext:
         if ch.isalpha():
             parts.append(f"[{ch.lower()}{ch.upper()}]")
@@ -128,8 +110,8 @@ def make_case_insensitive_glob_for_extension(ext: str) -> str:
     return f"*.{''.join(parts)}"
 
 
-def abspath(p: str) -> str:
-    return os.path.abspath(os.path.expanduser(p))
+def abspath(path: str) -> str:
+    return os.path.abspath(os.path.expanduser(path))
 
 
 def is_subpath(child: str, parent: str) -> bool:
@@ -139,275 +121,276 @@ def is_subpath(child: str, parent: str) -> bool:
         return False
 
 
-class BackupApp(tk.Tk):
+def resolve_initial_dir(current_value: Optional[str]) -> str:
+    value = (current_value or "").strip()
+    if value and os.path.isdir(value):
+        return value
+    volumes = "/Volumes"
+    if os.path.isdir(volumes):
+        return volumes
+    return os.path.expanduser("~")
+
+
+def list_directories(root: Path) -> list[Path]:
+    try:
+        entries = [p for p in root.iterdir() if p.is_dir()]
+    except Exception:
+        return []
+    entries.sort(key=lambda p: p.name.lower())
+    return entries
+
+
+class DirectoryDialog:
+    def __init__(self, label: str, current_value: str, on_select: Callable[[str], None]):
+        self.on_select = on_select
+        self.current_path = Path(resolve_initial_dir(current_value))
+        self.dialog = ui.dialog()
+        with self.dialog, ui.card().classes("min-w-[460px] gap-3"):
+            ui.label(label).classes("text-lg font-medium")
+            self.path_label = ui.label(str(self.current_path)).classes(
+                "text-sm text-gray-500 break-all"
+            )
+            with ui.row().classes("w-full justify-between"):
+                ui.button(
+                    "Select This Folder",
+                    on_click=self.select_current,
+                ).props("color=primary")
+                ui.button("Go Up", on_click=self.go_up).props("flat color=primary")
+            self.entries_column = ui.column().classes(
+                "max-h-[320px] overflow-y-auto w-full gap-1"
+            )
+            self._render_entries()
+        self.dialog.open()
+
+    def select_current(self) -> None:
+        self.on_select(str(self.current_path))
+        self.dialog.close()
+
+    def go_up(self) -> None:
+        parent = self.current_path.parent
+        if parent == self.current_path:
+            return
+        self.current_path = parent
+        self.path_label.text = str(self.current_path)
+        self._render_entries()
+
+    def enter(self, path: Path) -> None:
+        self.current_path = path
+        self.path_label.text = str(self.current_path)
+        self._render_entries()
+
+    def _render_entries(self) -> None:
+        self.entries_column.clear()
+        entries = list_directories(self.current_path)
+        with self.entries_column:
+            if not entries:
+                ui.label("No subdirectories found").classes("text-sm text-gray-500")
+                return
+            for entry in entries:
+                ui.button(
+                    entry.name or str(entry),
+                    on_click=lambda e, p=entry: self.enter(p),
+                ).classes("w-full justify-start").props("outline color=primary")
+
+
+class NiceBackupApp:
     def __init__(self):
-        super().__init__()
-        self.title(APP_NAME)
-        # Nice default size; Menlo is standard on macOS
-        self.geometry("820x560")
-        self.minsize(740, 480)
-
-        # State
-        self.log_q = queue.Queue()
-        self.worker_thread = None
+        settings = load_settings()
+        self.source = settings.get("source", "")
+        self.target = settings.get("target", "")
+        self.exclude_exts = settings.get("exclude_exts", "")
         self.rsync_path = find_rsync()
-        self.process = None
+
+        self.process: Optional[subprocess.Popen[str]] = None
+        self.worker_thread: Optional[threading.Thread] = None
+        self.log_queue: queue.Queue[str] = queue.Queue()
+        self.save_task: Optional[asyncio.Task[None]] = None
         self.is_running = False
-        self._save_job = None
-        self.settings = load_settings()
 
-        self._build_ui()
-        self._apply_settings(self.settings)
-        self._bind_autosave()
-        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # UI handles
+        self.src_input: Optional[ui.input] = None
+        self.dst_input: Optional[ui.input] = None
+        self.ext_input: Optional[ui.input] = None
+        self.start_button: Optional[ui.element] = None
+        self.stop_button: Optional[ui.element] = None
+        self.output_box: Optional[ui.textarea] = None
+        self.rsync_label: Optional[ui.label] = None
 
-    def _build_ui(self):
-        pad = {"padx": 10, "pady": 8}
+    def build(self) -> None:
+        with ui.column().classes("w-full max-w-4xl mx-auto p-6 gap-5"):
+            ui.label(APP_NAME).classes("text-3xl font-semibold")
+            ui.markdown(
+                "Select the source and target directories, optionally list the file "
+                "extensions you would like to exclude (comma/space separated), "
+                "then click **Backup** to run `rsync`."
+            )
 
-        main = ttk.Frame(self)
-        main.pack(fill="both", expand=True)
+            self.src_input = self._directory_input(
+                "Source directory", self.source, self._on_source_change
+            )
+            self.dst_input = self._directory_input(
+                "Target directory", self.target, self._on_target_change
+            )
 
-        # Source selector
-        row = ttk.Frame(main)
-        row.pack(fill="x", **pad)
-        ttk.Label(row, text="Source directory").pack(side="left")
-        self.src_var = tk.StringVar()
-        src_entry = ttk.Entry(row, textvariable=self.src_var)
-        src_entry.pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Button(row, text="Browse…", command=self._pick_src).pack(side="left")
+            self.ext_input = ui.input(
+                label="Exclude file extensions",
+                value=self.exclude_exts,
+                placeholder=".tmp .bak jpg",
+            ).props("clearable")
+            self.ext_input.on("change", self._handle_ext_change)
 
-        # Target selector
-        row = ttk.Frame(main)
-        row.pack(fill="x", **pad)
-        ttk.Label(row, text="Target directory").pack(side="left")
-        self.dst_var = tk.StringVar()
-        dst_entry = ttk.Entry(row, textvariable=self.dst_var)
-        dst_entry.pack(side="left", fill="x", expand=True, padx=8)
-        ttk.Button(row, text="Browse…", command=self._pick_dst).pack(side="left")
+            with ui.row().classes("gap-3"):
+                self.start_button = ui.button(
+                    "Backup", on_click=self.start_backup
+                ).props("color=primary")
+                self.stop_button = ui.button(
+                    "Stop", on_click=self.stop_backup
+                ).props("color=negative outline")
+                self.stop_button.disable()
+                ui.button("Clear Output", on_click=self.clear_output).props("flat")
 
-        # Exclusion extensions
-        row = ttk.Frame(main)
-        row.pack(fill="x", **pad)
-        ttk.Label(
-            row,
-            text="Exclude file extensions (comma/space separated, e.g. .tmp .bak jpg):",
-        ).pack(side="left")
-        self.ext_var = tk.StringVar()
-        ext_entry = ttk.Entry(row, textvariable=self.ext_var)
-        ext_entry.pack(side="left", fill="x", expand=True, padx=8)
+            self.output_box = ui.textarea(
+                label="rsync output",
+                value=self._initial_output(),
+            ).props("readonly").classes("font-mono text-sm h-[380px]")
 
-        # Buttons row
-        row = ttk.Frame(main)
-        row.pack(fill="x", **pad)
-        self.start_btn = ttk.Button(row, text="Backup", command=self._start_backup)
-        self.start_btn.pack(side="left")
+            self.rsync_label = ui.label().classes("text-sm text-gray-600")
+            self._update_rsync_label()
 
-        self.stop_btn = ttk.Button(
-            row, text="Stop", command=self._stop_backup, state="disabled"
-        )
-        self.stop_btn.pack(side="left", padx=(10, 0))
+        ui.timer(0.2, self.drain_log_queue)
 
-        ttk.Button(row, text="Clear Output", command=self._clear_output).pack(
-            side="right"
-        )
+    def _directory_input(
+        self, label: str, value: str, on_change: Callable[[str], None]
+    ) -> ui.input:
+        with ui.row().classes("w-full items-end gap-3"):
+            input_el = ui.input(label=label, value=value).props("clearable").classes(
+                "flex-grow"
+            )
+            input_el.on("change", lambda e: on_change((e.value or "").strip()))
 
-        # Output
-        out_frame = ttk.LabelFrame(main, text="rsync output")
-        out_frame.pack(fill="both", expand=True, **pad)
-        self.output = ScrolledText(
-            out_frame, wrap="none", height=20, font=("Menlo", 11)
-        )
-        self.output.pack(fill="both", expand=True)
-        self.output.insert(
-            "end",
+            def set_value_from_picker(selected: str) -> None:
+                input_el.value = selected
+                on_change(selected.strip())
+
+            async def browse_handler() -> None:
+                pick_supported, selection = await self._native_directory_dialog(
+                    input_el.value
+                )
+                if selection:
+                    set_value_from_picker(selection)
+                    return
+                if not pick_supported:
+                    DirectoryDialog(label, input_el.value, set_value_from_picker)
+
+            ui.button("Browse…", on_click=browse_handler).props("outline")
+        return input_el
+
+    def _initial_output(self) -> str:
+        return (
             f"{APP_NAME}\n"
             "— Select a source and target, optionally enter extensions to EXCLUDE,\n"
-            "  then click Backup to start rsync.\n\n",
+            "  then click Backup to start rsync.\n\n"
         )
-        self.output.configure(state="disabled")
 
-        # Footer info
-        bar = ttk.Frame(main)
-        bar.pack(fill="x", pady=(0, 6), padx=10)
-        self.rsync_label = ttk.Label(
-            bar,
-            text=f"rsync: {self.rsync_path or 'NOT FOUND'}",
-            foreground="green" if self.rsync_path else "red",
-        )
-        self.rsync_label.pack(side="left")
+    def _handle_ext_change(self, event) -> None:
+        value = (event.value or "").strip()
+        self.exclude_exts = value
+        self._schedule_save()
 
-    def _apply_settings(self, settings: dict):
-        if not isinstance(settings, dict):
-            return
-        src = settings.get("source")
-        dst = settings.get("target")
-        exts = settings.get("exclude_exts")
-        geom = settings.get("geometry")
-        if isinstance(src, str):
-            self.src_var.set(src)
-        if isinstance(dst, str):
-            self.dst_var.set(dst)
-        if isinstance(exts, str):
-            self.ext_var.set(exts)
-        if isinstance(geom, str):
+    def _on_source_change(self, value: str) -> None:
+        self.source = value
+        self._schedule_save()
+
+    def _on_target_change(self, value: str) -> None:
+        self.target = value
+        self._schedule_save()
+
+    def _schedule_save(self) -> None:
+        loop = asyncio.get_running_loop()
+        if self.save_task and not self.save_task.done():
+            self.save_task.cancel()
+
+        async def debounced() -> None:
             try:
-                self.geometry(geom)
-            except Exception:
+                await asyncio.sleep(SAVE_DEBOUNCE_SECONDS)
+                save_settings(self._gather_settings())
+            except asyncio.CancelledError:
                 pass
 
-    def _bind_autosave(self):
-        # Save when fields change, debounced to avoid excessive writes
-        def cb(*_):
-            self._on_field_change()
-
-        self.src_var.trace_add("write", lambda *_: cb())
-        self.dst_var.trace_add("write", lambda *_: cb())
-        self.ext_var.trace_add("write", lambda *_: cb())
+        self.save_task = loop.create_task(debounced())
 
     def _gather_settings(self) -> dict:
         return {
-            "source": self.src_var.get().strip(),
-            "target": self.dst_var.get().strip(),
-            "exclude_exts": self.ext_var.get().strip(),
-            "geometry": self.geometry(),
+            "source": self._current_source(),
+            "target": self._current_target(),
+            "exclude_exts": self._current_exts(),
         }
 
-    def _on_field_change(self):
-        if self._save_job is not None:
+    def _current_source(self) -> str:
+        if self.src_input is not None:
+            return (self.src_input.value or "").strip()
+        return self.source.strip()
+
+    def _current_target(self) -> str:
+        if self.dst_input is not None:
+            return (self.dst_input.value or "").strip()
+        return self.target.strip()
+
+    def _current_exts(self) -> str:
+        if self.ext_input is not None:
+            return (self.ext_input.value or "").strip()
+        return self.exclude_exts.strip()
+
+    async def _native_directory_dialog(self, current_value: str) -> Tuple[bool, Optional[str]]:
+        main_window = getattr(app.native, "main_window", None)
+        if not main_window or webview is None:
+            return False, None
+        directory = resolve_initial_dir(current_value)
+        kwargs = {
+            "directory": directory,
+            "allow_multiple": False,
+        }
+        dialog_type_value = None
+        if hasattr(webview, "FileDialog"):
             try:
-                self.after_cancel(self._save_job)
+                dialog_type_value = int(webview.FileDialog.FOLDER)
             except Exception:
-                pass
-            self._save_job = None
-        self._save_job = self.after(600, self._save_settings_now)
-
-    def _save_settings_now(self):
-        self._save_job = None
-        try:
-            save_settings(self._gather_settings())
-        except Exception:
-            pass
-
-    def _on_close(self):
-        try:
-            save_settings(self._gather_settings())
-        except Exception:
-            pass
-        try:
-            self.destroy()
-        except Exception:
-            os._exit(0)
-
-    def _resolve_initial_dir(self, current_value: str) -> str:
-        try:
-            path = (current_value or "").strip()
-        except Exception:
-            path = ""
-        if path and os.path.isdir(path):
-            return path
-        volumes = "/Volumes"
-        if os.path.isdir(volumes):
-            return volumes
-        return os.path.expanduser("~")
-
-    def _pick_src(self):
-        init_dir = self._resolve_initial_dir(self.src_var.get())
-        p = filedialog.askdirectory(title="Choose Source Directory", initialdir=init_dir)
-        if p:
-            self.src_var.set(p)
-
-    def _pick_dst(self):
-        init_dir = self._resolve_initial_dir(self.dst_var.get())
-        p = filedialog.askdirectory(title="Choose Target Directory", initialdir=init_dir)
-        if p:
-            self.dst_var.set(p)
-
-    def _append_output(self, text: str):
-        self.output.configure(state="normal")
-        self.output.insert("end", text)
-        self.output.see("end")
-        self.output.configure(state="disabled")
-
-    def _clear_output(self):
-        self.output.configure(state="normal")
-        self.output.delete("1.0", "end")
-        self.output.configure(state="disabled")
-
-    def _validate_inputs(self):
-        if not self.rsync_path:
-            messagebox.showerror(
-                "rsync not found",
-                "Could not find 'rsync'. Install via Homebrew (recommended) or ensure it's on your PATH.",
+                dialog_type_value = None
+        if dialog_type_value is None:
+            legacy = getattr(webview, "FOLDER_DIALOG", None) or getattr(
+                webview, "FOLDER_SELECT_DIALOG", None
             )
-            return False
+            if isinstance(legacy, int):
+                dialog_type_value = legacy
+        if dialog_type_value is not None:
+            kwargs["dialog_type"] = dialog_type_value
+        try:
+            result = await main_window.create_file_dialog(**kwargs)
+        except Exception:
+            return False, None
+        if not result:
+            return True, None
+        selected = result[0]
+        return True, selected
 
-        src = self.src_var.get().strip()
-        dst = self.dst_var.get().strip()
+    def _update_rsync_label(self) -> None:
+        if not self.rsync_label:
+            return
+        if self.rsync_path:
+            self.rsync_label.text = f"rsync: {self.rsync_path}"
+            self.rsync_label.classes(replace="text-sm text-green-600")
+        else:
+            self.rsync_label.text = "rsync: NOT FOUND"
+            self.rsync_label.classes(replace="text-sm text-red-600")
 
-        if not src:
-            messagebox.showwarning("Missing source", "Please select a source directory.")
-            return False
-        if not dst:
-            messagebox.showwarning("Missing target", "Please select a target directory.")
-            return False
-
-        if not os.path.isdir(src):
-            messagebox.showerror("Invalid source", f"Not a directory: {src}")
-            return False
-        if not os.path.isdir(dst):
-            messagebox.showerror("Invalid target", f"Not a directory: {dst}")
-            return False
-
-        # Protect against recursive copies (dst within src) or copying into itself
-        src_abs, dst_abs = abspath(src), abspath(dst)
-        if src_abs == dst_abs:
-            messagebox.showerror(
-                "Same directories",
-                "Source and target are the same directory. Choose different folders.",
-            )
-            return False
-        if is_subpath(dst_abs, src_abs):
-            messagebox.showerror(
-                "Invalid target",
-                "Target directory is inside the source directory. Choose a different target.",
-            )
-            return False
-        return True
-
-    def _build_rsync_command(self):
-        src = abspath(self.src_var.get().strip())
-        dst = abspath(self.dst_var.get().strip())
-
-        # Copy CONTENTS of source dir (trailing slash). Remove it if you want to copy the folder itself.
-        src_with_slash = src.rstrip(os.sep) + os.sep
-
-        cmd = [self.rsync_path, "-avP"]
-
-        # Exclude extensions
-        exts = normalize_ext_list(self.ext_var.get())
-        for ext in exts:
-            pattern = make_case_insensitive_glob_for_extension(ext)
-            cmd += ["--exclude", pattern]
-
-        cmd += [src_with_slash, dst]
-        return cmd
-
-    def _set_running(self, running: bool):
-        self.is_running = running
-        state = "disabled" if running else "normal"
-        self.start_btn.configure(state="disabled" if running else "normal")
-        self.stop_btn.configure(state="normal" if running else "disabled")
-
-    def _start_backup(self):
+    def start_backup(self) -> None:
         if self.is_running:
             return
         if not self._validate_inputs():
             return
 
         cmd = self._build_rsync_command()
-
-        # Show the exact command being run
-        cmd_str = " ".join(shlex.quote(p) for p in cmd)
+        cmd_str = " ".join(shlex.quote(part) for part in cmd)
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         self._append_output(f"\n[{ts}] Starting rsync:\n$ {cmd_str}\n\n")
 
@@ -416,19 +399,68 @@ class BackupApp(tk.Tk):
             target=self._rsync_worker, args=(cmd,), daemon=True
         )
         self.worker_thread.start()
-        self.after(80, self._drain_log_queue)
 
-    def _stop_backup(self):
+    def stop_backup(self) -> None:
         if self.process and self.is_running:
             try:
                 self.process.terminate()
                 self._append_output("\nStopping rsync (terminate sent)…\n")
-            except Exception as e:
-                self._append_output(f"\nFailed to stop rsync: {e}\n")
+            except Exception as exc:
+                self._append_output(f"\nFailed to stop rsync: {exc}\n")
 
-    def _rsync_worker(self, cmd):
+    def clear_output(self) -> None:
+        if self.output_box:
+            self.output_box.value = ""
+
+    def _validate_inputs(self) -> bool:
+        if not self.rsync_path:
+            ui.notify(
+                "Could not find 'rsync'. Install via Homebrew or ensure it is on PATH.",
+                color="negative",
+            )
+            return False
+        src = self._current_source()
+        dst = self._current_target()
+        if not src:
+            ui.notify("Please select a source directory.", color="warning")
+            return False
+        if not dst:
+            ui.notify("Please select a target directory.", color="warning")
+            return False
+        if not os.path.isdir(src):
+            ui.notify(f"Not a directory: {src}", color="negative")
+            return False
+        if not os.path.isdir(dst):
+            ui.notify(f"Not a directory: {dst}", color="negative")
+            return False
+        src_abs, dst_abs = abspath(src), abspath(dst)
+        if src_abs == dst_abs:
+            ui.notify(
+                "Source and target cannot be the same directory.",
+                color="negative",
+            )
+            return False
+        if is_subpath(dst_abs, src_abs):
+            ui.notify(
+                "Target directory is inside the source directory.",
+                color="negative",
+            )
+            return False
+        return True
+
+    def _build_rsync_command(self) -> list[str]:
+        src = abspath(self._current_source())
+        dst = abspath(self._current_target())
+        src_with_slash = src.rstrip(os.sep) + os.sep
+        cmd = [self.rsync_path, "-avP"]
+        for ext in normalize_ext_list(self._current_exts()):
+            pattern = make_case_insensitive_glob_for_extension(ext)
+            cmd.extend(["--exclude", pattern])
+        cmd.extend([src_with_slash, dst])
+        return cmd
+
+    def _rsync_worker(self, cmd: list[str]) -> None:
         try:
-            # Merge stderr into stdout so lines display in order
             self.process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -439,57 +471,84 @@ class BackupApp(tk.Tk):
                 errors="replace",
             )
         except FileNotFoundError:
-            self.log_q.put("Error: rsync not found. Ensure rsync is installed and on PATH.\n")
-            self.log_q.put(SENTINEL_DONE)
+            self.log_queue.put("Error: rsync not found. Ensure rsync is installed.\n")
+            self.log_queue.put(SENTINEL_DONE)
             return
-        except Exception as e:
-            self.log_q.put(f"Failed to start rsync: {e}\n")
-            self.log_q.put(SENTINEL_DONE)
+        except Exception as exc:
+            self.log_queue.put(f"Failed to start rsync: {exc}\n")
+            self.log_queue.put(SENTINEL_DONE)
             return
 
-        # Stream output lines
+        assert self.process.stdout is not None
         try:
-            assert self.process.stdout is not None
             for line in self.process.stdout:
-                self.log_q.put(line)
-        except Exception as e:
-            self.log_q.put(f"\n[reader error] {e}\n")
+                self.log_queue.put(line)
+        except Exception as exc:
+            self.log_queue.put(f"\n[reader error] {exc}\n")
 
         rc = self.process.wait()
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        self.log_q.put(f"\n[{ts}] rsync finished with exit code {rc}\n")
-        self.log_q.put(SENTINEL_DONE)
+        self.log_queue.put(f"\n[{ts}] rsync finished with exit code {rc}\n")
+        self.log_queue.put(SENTINEL_DONE)
 
-    def _drain_log_queue(self):
-        drained_any = False
+    def drain_log_queue(self) -> None:
+        drained = False
         while True:
             try:
-                msg = self.log_q.get_nowait()
+                msg = self.log_queue.get_nowait()
             except queue.Empty:
                 break
-            drained_any = True
+            drained = True
             if msg == SENTINEL_DONE:
                 self._set_running(False)
                 self.process = None
                 continue
             self._append_output(msg)
 
-        if self.is_running or drained_any:
-            # Keep polling while running or while there may still be messages coming
-            self.after(80, self._drain_log_queue)
+    def _append_output(self, text: str) -> None:
+        if not self.output_box:
+            return
+        current = self.output_box.value or ""
+        self.output_box.value = f"{current}{text}"
+
+    def _set_running(self, running: bool) -> None:
+        self.is_running = running
+        if self.start_button:
+            self.start_button.disable() if running else self.start_button.enable()
+        if self.stop_button:
+            self.stop_button.enable() if running else self.stop_button.disable()
+
+    def shutdown(self) -> None:
+        if self.save_task and not self.save_task.done():
+            try:
+                self.save_task.cancel()
+            except Exception:
+                pass
+        save_settings(self._gather_settings())
+        if self.process and self.is_running:
+            try:
+                self.process.terminate()
+            except Exception:
+                pass
 
 
-def main():
-    app = BackupApp()
-    # macOS menubar nicer app name
+def main() -> None:
+    backup_app = NiceBackupApp()
+
+    def build_ui():
+        backup_app.build()
+
     try:
-        from ctypes import cdll
-        appId = "com.example.backupcards"
-        cdll.LoadLibrary("/System/Library/Frameworks/AppKit.framework/AppKit")
-        # Note: setting the bundle id at runtime is non-trivial; keeping here as a placeholder
-    except Exception:
-        pass
-    app.mainloop()
+        ui.run(
+            title=APP_NAME,
+            root=build_ui,
+            native=True,
+            window_size=(1024, 720),
+            reload=False,
+            show=False,
+        )
+    finally:
+        backup_app.shutdown()
 
 
 if __name__ == "__main__":
