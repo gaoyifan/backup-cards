@@ -50,3 +50,5 @@ coverage.xml
 # pyenv
 .python-version
 
+# Syncthing
+.stignore
