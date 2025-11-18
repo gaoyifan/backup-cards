@@ -217,54 +217,123 @@ class NiceBackupApp:
         self.rsync_label: Optional[ui.label] = None
 
     def build(self) -> None:
-        with ui.column().classes("w-full max-w-4xl mx-auto p-6 gap-5"):
-            ui.label(APP_NAME).classes("text-3xl font-semibold")
-            ui.markdown(
-                "Select the source and target directories, optionally list the file "
-                "extensions you would like to exclude (comma/space separated), "
-                "then click **Backup** to run `rsync`."
-            )
+        ui.page_title(APP_NAME)
+        ui.dark_mode()
+        ui.add_head_html(
+            "<style>body,#q-app{background-color:#000000!important;}</style>"
+        )
+        with ui.row().classes(
+            "w-full min-h-screen bg-black text-slate-100 items-center justify-center p-5"
+        ):
+            with ui.card().classes(
+                "w-full max-w-4xl bg-slate-900/95 border border-white/10 rounded-[32px] p-8 gap-6 shadow-2xl"
+            ):
+                with ui.row().classes("items-center gap-4 flex-wrap"):
+                    ui.icon("inventory_2", size="44px").classes(
+                        "text-primary bg-white/10 rounded-3xl p-3"
+                    )
+                    with ui.column().classes("gap-1"):
+                        ui.label(APP_NAME).classes("text-3xl font-semibold tracking-tight")
+                        ui.label(
+                            "Select folders, tune filters, and launch rsync backups with live feedback."
+                        ).classes("text-sm text-slate-300")
+                with ui.row().classes("items-center gap-3 flex-wrap"):
+                    ui.badge("macOS native").props("color=primary")
+                    ui.badge("NiceGUI + pywebview").props("outline color=white")
+                    ui.badge("Live rsync log").props("color=positive")
+                    self.rsync_label = ui.label().classes(
+                        "text-sm font-mono text-emerald-300"
+                    )
+                    self._update_rsync_label()
 
-            self.src_input = self._directory_input(
-                "Source directory", self.source, self._on_source_change
-            )
-            self.dst_input = self._directory_input(
-                "Target directory", self.target, self._on_target_change
-            )
+                ui.separator().classes("opacity-30")
 
-            self.ext_input = ui.input(
-                label="Exclude file extensions",
-                value=self.exclude_exts,
-                placeholder=".tmp .bak jpg",
-            ).props("clearable")
-            self.ext_input.on("change", self._handle_ext_change)
+                with ui.row().classes("w-full gap-4 flex-col lg:flex-row"):
+                    with ui.column().classes("flex-1 gap-2"):
+                        ui.label("Source").classes(
+                            "text-xs uppercase tracking-[0.2em] text-slate-400"
+                        )
+                        self.src_input = self._directory_input(
+                            "Source directory", self.source, self._on_source_change
+                        )
+                    with ui.column().classes("flex-1 gap-2"):
+                        ui.label("Target").classes(
+                            "text-xs uppercase tracking-[0.2em] text-slate-400"
+                        )
+                        self.dst_input = self._directory_input(
+                            "Target directory", self.target, self._on_target_change
+                        )
 
-            with ui.row().classes("gap-3"):
-                self.start_button = ui.button(
-                    "Backup", on_click=self.start_backup
-                ).props("color=primary")
-                self.stop_button = ui.button(
-                    "Stop", on_click=self.stop_backup
-                ).props("color=negative outline")
-                self.stop_button.disable()
-                ui.button("Clear Output", on_click=self.clear_output).props("flat")
+                ui.separator().classes("opacity-30")
 
-            self.output_box = ui.textarea(
-                label="rsync output",
-                value=self._initial_output(),
-            ).props("readonly").classes("font-mono text-sm h-[380px]")
+                with ui.column().classes("w-full gap-3"):
+                    ui.label("Filters & Controls").classes(
+                        "text-xs uppercase tracking-[0.2em] text-slate-400"
+                    )
+                    self.ext_input = (
+                        ui.input(
+                            label="Exclude file extensions",
+                            value=self.exclude_exts,
+                            placeholder=".tmp .bak jpg",
+                        )
+                        .props(
+                            'clearable filled dense color=primary dark input-class="text-white placeholder-slate-400"'
+                        )
+                        .classes("w-full")
+                        .style("color:#e2e8f0")
+                    )
+                    self.ext_input.on("change", self._handle_ext_change)
 
-            self.rsync_label = ui.label().classes("text-sm text-gray-600")
-            self._update_rsync_label()
+                    with ui.row().classes("gap-3 flex-wrap"):
+                        self.start_button = ui.button(
+                            "Start Backup",
+                            on_click=self.start_backup,
+                        ).props("unelevated color=primary")
+                        self.stop_button = ui.button(
+                            "Stop",
+                            on_click=self.stop_backup,
+                        ).props("outline color=negative")
+                        self.stop_button.disable()
+                        ui.button(
+                            "Clear Output",
+                            on_click=self.clear_output,
+                        ).props("flat color=white")
+
+                ui.separator().classes("opacity-30")
+
+                with ui.column().classes("w-full gap-3"):
+                    ui.label("rsync Output").classes(
+                        "text-xs uppercase tracking-[0.2em] text-slate-400"
+                    )
+                    self.output_box = (
+                        ui.textarea(
+                            value=self._initial_output(),
+                        )
+                        .props(
+                            'readonly autogrow dark borderless input-class="text-white placeholder-slate-400"'
+                        )
+                        .classes(
+                            "w-full font-mono text-sm text-slate-100 placeholder-slate-500 "
+                            "bg-slate-950/70 border border-white/10 rounded-2xl"
+                        )
+                        .style(
+                            "color:#e2e8f0; min-height:220px; max-height:60vh; overflow:auto;"
+                        )
+                    )
 
         ui.timer(0.2, self.drain_log_queue)
 
     def _directory_input(
         self, label: str, value: str, on_change: Callable[[str], None]
     ) -> ui.input:
-        with ui.row().classes("w-full items-end gap-3"):
-            input_el = ui.input(label=label, value=value).props("clearable").classes(
-                "flex-grow"
+        with ui.row().classes("w-full items-end gap-3 flex-wrap"):
+            input_el = (
+                ui.input(label=label, value=value)
+                .props(
+                    'clearable filled dense color=primary dark input-class="text-white placeholder-slate-400"'
+                )
+                .classes("flex-grow")
+                .style("color:#e2e8f0")
             )
             input_el.on("change", lambda e: on_change((e.value or "").strip()))
 
@@ -282,7 +351,9 @@ class NiceBackupApp:
                 if not pick_supported:
                     DirectoryDialog(label, input_el.value, set_value_from_picker)
 
-            ui.button("Browse…", on_click=browse_handler).props("outline")
+            ui.button("Browse…", on_click=browse_handler).props(
+                "outline color=white"
+            ).classes("rounded-xl")
         return input_el
 
     def _initial_output(self) -> str:
