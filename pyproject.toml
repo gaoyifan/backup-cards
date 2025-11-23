@@ -30,6 +30,4 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/backend", "src/frontend"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/config.py" = "config.py"
+include = ["src/config.py"]
