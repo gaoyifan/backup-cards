@@ -32,7 +32,7 @@ The SD Backup Tool is a Python application designed to automatically back up sto
 
 #### 1. Entry Point (`src/main.py`)
 - Single entry point for the application
-- Parses command-line arguments (`--headless` flag)
+- Parses command-line arguments (`--headless` flag, optional `--host`/`--port` overrides)
 - Loads configuration from `config.yaml`
 - Configures logging (file or stderr)
 - Allocates dynamic port (if configured as 0)
@@ -167,9 +167,8 @@ All Python loggers inherit from the root logger configuration.
 When `graphql_port` is set to `0`:
 
 1. `get_free_port()` finds an available port
-2. Port is written to `.port` file
-3. Port is passed to both backend and frontend
-4. E2E tests read from `.port` file
+2. Port is passed to both backend and frontend
+3. Tests can set a port explicitly with `--port` to avoid collisions
 
 ## Running the Application
 
@@ -260,5 +259,5 @@ Core dependencies:
 
 **GraphQL connection fails:**
 - Check backend is running and port is correct
-- Verify `.port` file contains valid port
+- If using dynamic ports, ensure the chosen port is passed to the frontend/startup command
 - Check firewall/network settings

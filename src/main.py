@@ -1,14 +1,14 @@
 import argparse
+import logging
+import socket
+import sys
 import threading
 import time
+
 import uvicorn
-import sys
-import socket
-import os
+
 from backend.server import app
 from config import load_config
-
-import logging
 
 def configure_logging(log_path=None):
     root_logger = logging.getLogger()
@@ -37,54 +37,48 @@ def get_free_port():
         s.bind(('', 0))
         return s.getsockname()[1]
 
+def build_uvicorn_log_config(log_path):
+    if not log_path:
+        return None
+
+    log_config = uvicorn.config.LOGGING_CONFIG.copy()
+    log_config["handlers"]["default"] = {
+        "class": "logging.FileHandler",
+        "filename": log_path,
+        "formatter": "default",
+    }
+    log_config["handlers"]["access"] = {
+        "class": "logging.FileHandler",
+        "filename": log_path,
+        "formatter": "access",
+    }
+    log_config["loggers"]["uvicorn"]["handlers"] = ["default"]
+    log_config["loggers"]["uvicorn.error"]["handlers"] = ["default"]
+    log_config["loggers"]["uvicorn.access"]["handlers"] = ["access"]
+    return log_config
+
 def main():
     parser = argparse.ArgumentParser(description="SD Card Backup Tool")
     parser.add_argument("--headless", action="store_true", help="Run in headless mode (backend only)")
+    parser.add_argument("--host", help="Override GraphQL host from config")
+    parser.add_argument(
+        "--port",
+        type=int,
+        help="Override GraphQL port from config (use 0 for dynamic allocation)",
+    )
     args = parser.parse_args()
 
     config = load_config()
-    host = config.get("graphql_host", "127.0.0.1")
-    port = config.get("graphql_port", 0)
+    host = args.host or config.get("graphql_host", "127.0.0.1")
+    port = config.get("graphql_port", 0) if args.port is None else args.port
     log_path = config.get("log_path")
 
     configure_logging(log_path)
 
     if port == 0:
         port = get_free_port()
-        
-    # Write port to file for external tools (e.g. E2E tests)
-    with open(".port", "w") as f:
-        f.write(str(port))
 
-    # Prepare uvicorn log config if logging to file
-    uvicorn_log_config = uvicorn.config.LOGGING_CONFIG.copy()
-    if log_path:
-        # If logging to file, we want uvicorn to also log to that file or be silent on stdout
-        # Simplest way is to let uvicorn use the root logger which we configured?
-        # Or explicitly configure uvicorn loggers.
-        # Uvicorn by default configures its own loggers.
-        # We can pass log_config=None to let it use root logger, but uvicorn might reconfigure.
-        # Let's try passing a modified config or just None if we want it to inherit?
-        # Actually, if we pass log_config=None, uvicorn uses basicConfig if not set?
-        # Let's try to just redirect uvicorn logs to our file if log_path is set.
-        # For now, let's pass None to run_backend and handle it there.
-        pass
-
-    # Start backend in a separate thread
-    # We need to pass log configuration to uvicorn to prevent it from printing to stdout if log_path is set
-    # If log_path is set, we want uvicorn to log to file or nothing to stdout.
-    # We can create a log config dict.
-    log_config = None
-    if log_path:
-        log_config = uvicorn.config.LOGGING_CONFIG.copy()
-        log_config["handlers"]["default"] = {"class": "logging.FileHandler", "filename": log_path, "formatter": "default"}
-        log_config["handlers"]["access"] = {"class": "logging.FileHandler", "filename": log_path, "formatter": "access"}
-        # We might need to ensure formatters are defined or reuse them.
-        # Uvicorn config is complex.
-        # Simpler approach: If log_path is set, tell uvicorn to use our handlers?
-        # Or just suppress uvicorn stdout?
-        # Let's try modifying the handlers in the default config.
-        pass
+    log_config = build_uvicorn_log_config(log_path)
 
     backend_thread = threading.Thread(target=run_backend, args=(host, port, log_config), daemon=True)
     backend_thread.start()
