@@ -30,7 +30,7 @@ The SD Backup Tool is a Python application designed to automatically back up sto
 
 ### Component Overview
 
-#### 1. Entry Point (`src/main.py`)
+#### 1. Entry Point (`main.py`)
 - Single entry point for the application
 - Parses command-line arguments (`--headless` flag, optional `--host`/`--port` overrides)
 - Loads configuration from `config.yaml`
@@ -174,12 +174,12 @@ When `graphql_port` is set to `0`:
 
 ### Full Mode (Backend + Frontend)
 ```bash
-uv run python src/main.py
+uv run main.py
 ```
 
 ### Headless Mode (Backend Only)
 ```bash
-uv run python src/main.py --headless
+uv run main.py --headless
 ```
 
 ## Development
@@ -202,17 +202,17 @@ sd-backup/
 
 **E2E Test:**
 ```bash
-uv run python tests/e2e_test.py
+uv run tests/e2e_test.py
 ```
 
 **Auto Backup Test:**
 ```bash
-uv run python tests/auto_backup_test.py
+uv run tests/auto_backup_test.py
 ```
 
 **Log Test:**
 ```bash
-uv run python tests/log_test.py
+uv run tests/log_test.py
 ```
 
 ## Dependencies

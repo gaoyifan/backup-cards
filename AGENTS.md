@@ -1,12 +1,12 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Single entry: `src/main.py` configures logging, allocates port (0 for dynamic), starts FastAPI/GraphQL backend and Textual UI. Run only via `uv run python src/main.py`.
+- Single entry: `main.py` configures logging, allocates port (0 for dynamic), starts FastAPI/GraphQL backend and Textual UI. Run only via `uv run python main.py`.
 - Backend in `src/backend/` (`server.py`, `schema.py`, `backup.py`, `monitor.py`); frontend in `src/frontend/` (`app.py`, `screens.py`, `client.py`). Config loader: `src/config.py`, user config: `config.yaml`. Docs in `docs/`, tests in `tests/`.
 
 ## Build, Test, and Development Commands
 - Install deps: `uv sync`.
-- Run: `uv run python src/main.py` (UI) or `--headless` (backend only); specify `--port 0` for free port. Frontend never reads config directly—host/port passed from `main.py`.
+- Run: `uv run python main.py` (UI) or `--headless` (backend only); specify `--port 0` for free port. Frontend never reads config directly—host/port passed from `main.py`.
 - Tests: `uv run python tests/e2e_test.py`, `uv run python tests/auto_backup_test.py`, `uv run python tests/log_test.py`. Tail log file if `log_path` set (e.g., `tail -f backend.log`).
 
 ## Coding Style & Naming Conventions

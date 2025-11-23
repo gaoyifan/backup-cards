@@ -26,7 +26,7 @@ def test_logging():
         # Run main.py
         print("Starting backend...")
         process = subprocess.Popen(
-            ["uv", "run", "python", "src/main.py", "--headless"],
+            ["uv", "run", "python", "main.py", "--headless"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True

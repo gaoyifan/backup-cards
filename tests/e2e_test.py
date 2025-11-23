@@ -52,7 +52,7 @@ async def run_test():
     # Start main.py in headless mode
     print("Starting backend subprocess...")
     process = subprocess.Popen(
-        ["uv", "run", "python", "src/main.py", "--headless", "--port", str(port)],
+        ["uv", "run", "python", "main.py", "--headless", "--port", str(port)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True
