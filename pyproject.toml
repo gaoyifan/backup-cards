@@ -1,0 +1,31 @@
+[project]
+name = "sd-backup"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.121.3",
+    "gql[websockets]>=4.0.0",
+    "psutil>=7.1.3",
+    "pyudev>=0.24.4",
+    "pyyaml>=6.0.3",
+    "requests>=2.32.5",
+    "rich>=14.2.0",
+    "strawberry-graphql>=0.287.0",
+    "textual>=6.6.0",
+    "textual-dev>=1.8.0",
+    "uvicorn>=0.38.0",
+]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/backend", "src/frontend"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/config.py" = "config.py"
