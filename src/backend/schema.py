@@ -2,7 +2,7 @@ import strawberry
 import asyncio
 from typing import AsyncGenerator, List, Optional
 from strawberry.types import Info
-from config import load_config, update_config, load_config as get_config
+from config import AppConfig, update_config
 from backend.backup import BackupManager
 import logging
 
@@ -36,12 +36,12 @@ class BackupStatus:
 class Query:
     @strawberry.field
     def config(self) -> Config:
-        c = get_config()
+        c = AppConfig()
         return Config(
-            mount_point_template=c.get("mount_point_template", ""),
-            target_path_template=c.get("target_path_template", ""),
-            graphql_host=c.get("graphql_host", ""),
-            graphql_port=c.get("graphql_port", 0),
+            mount_point_template=c.mount_point_template,
+            target_path_template=c.target_path_template,
+            graphql_host=c.graphql_host,
+            graphql_port=c.graphql_port,
         )
 
     @strawberry.field

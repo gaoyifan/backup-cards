@@ -8,7 +8,7 @@ import time
 import uvicorn
 
 from backend.server import app
-from config import load_config
+from config import AppConfig
 
 def configure_logging(log_path=None):
     root_logger = logging.getLogger()
@@ -68,10 +68,10 @@ def main():
     )
     args = parser.parse_args()
 
-    config = load_config()
-    host = args.host or config.get("graphql_host", "127.0.0.1")
-    port = config.get("graphql_port", 0) if args.port is None else args.port
-    log_path = config.get("log_path")
+    config = AppConfig()
+    host = args.host or config.graphql_host
+    port = config.graphql_port if args.port is None else args.port
+    log_path = config.log_path
 
     configure_logging(log_path)
 
