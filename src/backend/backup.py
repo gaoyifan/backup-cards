@@ -1,61 +1,59 @@
-import subprocess
-import os
-import logging
+import asyncio
 import datetime
-import shutil
-import pyudev
+import logging
+import os
+import subprocess
 from typing import Optional
+
+import pyudev
+
 from backend.config import get_config
 
 logger = logging.getLogger(__name__)
 
+
 class BackupManager:
     def __init__(self):
-        self.current_process: Optional[subprocess.Popen] = None
+        self.current_process: Optional[asyncio.subprocess.Process] = None
+        self._lock = asyncio.Lock()
 
-    def mount_device(self, device: pyudev.Device) -> str:
-        """
-        Mounts the device if not already mounted.
-        Returns the mount point path.
-        """
-        # Check if already mounted
-        # device.device_node is like /dev/sdb1
-        # We can check /proc/mounts or use psutil, but let's stick to simple checks or udisks if needed.
-        # For simplicity and root assumption, we can use `mount` command.
-        
-        # First check if it's already mounted
+    def is_active(self) -> bool:
+        process = self.current_process
+        return process is not None and process.returncode is None
+
+    async def mount_device(self, device: pyudev.Device) -> str:
+        device_node = device.device_node
+        uuid = device.get("ID_FS_UUID", "unknown")
+        return await asyncio.to_thread(self._mount_device_sync, device_node, uuid)
+
+    def _mount_device_sync(self, device_node: str, uuid: str) -> str:
         with open("/proc/mounts", "r") as f:
             for line in f:
                 parts = line.split()
-                if parts[0] == device.device_node:
-                    logger.info(f"Device {device.device_node} already mounted at {parts[1]}")
+                if parts[0] == device_node:
+                    logger.info(f"Device {device_node} already mounted at {parts[1]}")
                     return parts[1]
 
         runtime_config = get_config()
-        uuid = device.get("ID_FS_UUID", "unknown")
         mount_point_template = runtime_config.mount_point_template
         mount_point = mount_point_template.format(uuid=uuid)
 
         if not os.path.exists(mount_point):
             os.makedirs(mount_point, exist_ok=True)
 
-        logger.info(f"Mounting {device.device_node} to {mount_point}")
-        try:
-            subprocess.run(["mount", device.device_node, mount_point], check=True)
-            return mount_point
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to mount device: {e}")
-            raise
+        logger.info(f"Mounting {device_node} to {mount_point}")
+        subprocess.run(["mount", device_node, mount_point], check=True)
+        return mount_point
 
-    def resolve_target_path(self, device: pyudev.Device, source_path: str) -> str:
+    async def resolve_target_path(self, device: pyudev.Device, source_path: str) -> str:
+        uuid = device.get("ID_FS_UUID", "unknown")
+        return await asyncio.to_thread(self._resolve_target_path_sync, uuid, source_path)
+
+    def _resolve_target_path_sync(self, uuid: str, source_path: str) -> str:
         runtime_config = get_config()
         target_template = runtime_config.target_path_template
-        
-        # Get UUID
-        uuid = device.get("ID_FS_UUID", "unknown")
         uuid_short = uuid[:4] if len(uuid) >= 4 else uuid
 
-        # Scan for earliest modification time
         earliest_mtime = None
         try:
             for root, dirs, files in os.walk(source_path):
@@ -67,11 +65,6 @@ class BackupManager:
                             earliest_mtime = mtime
                     except OSError:
                         continue
-                # Just scan top level or shallow? "among the files on the storage card" implies potentially all.
-                # But walking deep might be slow. Let's assume we walk.
-                # Optimization: maybe just check the root dir files or stop after some limit?
-                # User requirement: "earliest modification time among the files".
-                pass
         except Exception as e:
             logger.warning(f"Error scanning files for mtime: {e}")
 
@@ -89,62 +82,60 @@ class BackupManager:
             hour=hour_str,
             minute=minute_str,
             uuid=uuid,
-            uuid_short=uuid_short
+            uuid_short=uuid_short,
         )
-        
-        # Expand user tilde
-        target_path = os.path.expanduser(target_path)
-        return target_path
+        return os.path.expanduser(target_path)
 
-    def perform_backup(self, source: str, target: str) -> None:
-        if self.current_process and self.current_process.poll() is None:
-            raise RuntimeError("A backup is already in progress.")
+    async def perform_backup(self, source: str, target: str) -> None:
+        async with self._lock:
+            if self.is_active():
+                raise RuntimeError("A backup is already in progress.")
 
-        if not os.path.exists(target):
-            os.makedirs(target, exist_ok=True)
+            await asyncio.to_thread(os.makedirs, target, exist_ok=True)
+            cmd = ["rsync", "-av", "--info=progress2", f"{source}/", f"{target}/"]
+            logger.info(f"Starting backup: {' '.join(cmd)}")
 
-        cmd = ["rsync", "-av", "--info=progress2", source + "/", target + "/"]
-        logger.info(f"Starting backup: {' '.join(cmd)}")
+            self.current_process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
 
         try:
-            self.current_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True
-            )
-            
-            # We are not parsing output, but we need to consume it to prevent buffer filling?
-            # Or just let it run. If we don't read, it might block if buffer fills.
-            # We should probably read it and maybe log it or just discard it if user said "No output parsing".
-            # User said "Remove this feature" regarding "Parse output for progress updates".
-            # But we still need to ensure the process runs smoothly.
-            # Let's read line by line and log debug.
-            if self.current_process.stdout:
-                for line in self.current_process.stdout:
-                    logger.debug(f"rsync: {line.strip()}")
-            
-            self.current_process.wait()
-            
-            if self.current_process.returncode != 0:
-                raise subprocess.CalledProcessError(self.current_process.returncode, cmd)
-            
-            logger.info("Backup completed successfully.")
+            if self.current_process and self.current_process.stdout:
+                while True:
+                    line = await self.current_process.stdout.readline()
+                    if not line:
+                        break
+                    decoded = line.decode().strip()
+                    if decoded:
+                        logger.debug(f"rsync: {decoded}")
 
+            if self.current_process:
+                returncode = await self.current_process.wait()
+                if returncode != 0:
+                    raise subprocess.CalledProcessError(returncode, cmd)
+
+            logger.info("Backup completed successfully.")
         except Exception as e:
             logger.error(f"Backup failed: {e}")
             raise
         finally:
             self.current_process = None
 
-    def cancel_backup(self):
-        if self.current_process and self.current_process.poll() is None:
-            logger.info("Cancelling backup...")
-            self.current_process.terminate()
-            try:
-                self.current_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.current_process.kill()
-            logger.info("Backup cancelled.")
-        else:
+    async def cancel_backup(self):
+        process = self.current_process
+        if not process or process.returncode is not None:
             logger.info("No backup to cancel.")
+            return
+
+        logger.info("Cancelling backup...")
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+        finally:
+            self.current_process = None
+            logger.info("Backup cancelled.")

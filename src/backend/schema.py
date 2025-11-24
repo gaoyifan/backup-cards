@@ -1,20 +1,36 @@
-import strawberry
 import asyncio
-from typing import AsyncGenerator, List
-from strawberry.types import Info
-from backend.config import get_config, update_config as update_config_store
-from backend.backup import BackupManager
 import logging
+from typing import AsyncGenerator, List, Set
+
+import strawberry
+
+from backend.backup import BackupManager
+from backend.config import get_config, update_config as update_config_store
 
 logger = logging.getLogger(__name__)
 
-# Global state for simplicity in this scale
 backup_manager = BackupManager()
 logs: List[str] = []
+_background_tasks: Set[asyncio.Task] = set()
+
 
 def add_log(message: str):
     logs.append(message)
-    # In a real app, we might want to trim logs or persist them
+
+
+def _track_background_task(task: asyncio.Task):
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def _run_manual_backup(source: str, target: str):
+    try:
+        add_log(f"Starting backup from {source} to {target}")
+        await backup_manager.perform_backup(source, target)
+        add_log("Backup finished successfully")
+    except Exception as exc:
+        add_log(f"Backup failed: {exc}")
+        logger.exception("Manual backup failed")
 
 @strawberry.type
 class Config:
@@ -45,39 +61,34 @@ class Query:
         return [LogEntry(message=m) for m in logs]
 
     @strawberry.field
-    def current_status(self) -> BackupStatus:
-        active = backup_manager.current_process is not None and backup_manager.current_process.poll() is None
+    async def current_status(self) -> BackupStatus:
+        active = backup_manager.is_active()
         return BackupStatus(active=active, message="Backup in progress" if active else "Idle")
 
 @strawberry.type
 class Mutation:
     @strawberry.mutation
-    def start_manual_backup(self, source: str, target: str) -> str:
-        try:
-            # Run in background or thread? 
-            # perform_backup blocks until rsync finishes. We should run it in a thread so mutation returns immediately?
-            # Or maybe the user expects it to block? Usually mutations return result.
-            # But backup can take long.
-            # Let's run it in a thread.
-            import threading
-            def run():
-                try:
-                    add_log(f"Starting backup from {source} to {target}")
-                    backup_manager.perform_backup(source, target)
-                    add_log("Backup finished successfully")
-                except Exception as e:
-                    add_log(f"Backup failed: {e}")
+    async def start_manual_backup(self, source: str, target: str) -> str:
+        if backup_manager.is_active():
+            return "Backup already in progress"
 
-            t = threading.Thread(target=run, daemon=True)
-            t.start()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+
+        try:
+            task = loop.create_task(_run_manual_backup(source, target))
+            _track_background_task(task)
             return "Backup started"
         except Exception as e:
+            logger.error(f"Failed to schedule manual backup: {e}")
             return f"Failed to start backup: {e}"
 
     @strawberry.mutation
-    def cancel_backup(self) -> str:
+    async def cancel_backup(self) -> str:
         try:
-            backup_manager.cancel_backup()
+            await backup_manager.cancel_backup()
             add_log("Backup cancelled by user")
             return "Backup cancelled"
         except Exception as e:
