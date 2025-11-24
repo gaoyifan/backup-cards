@@ -5,7 +5,7 @@ import datetime
 import shutil
 import pyudev
 from typing import Optional
-from config import AppConfig
+from backend.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +31,9 @@ class BackupManager:
                     logger.info(f"Device {device.device_node} already mounted at {parts[1]}")
                     return parts[1]
 
-        config = AppConfig()
+        runtime_config = get_config()
         uuid = device.get("ID_FS_UUID", "unknown")
-        mount_point_template = config.mount_point_template
+        mount_point_template = runtime_config.mount_point_template
         mount_point = mount_point_template.format(uuid=uuid)
 
         if not os.path.exists(mount_point):
@@ -48,8 +48,8 @@ class BackupManager:
             raise
 
     def resolve_target_path(self, device: pyudev.Device, source_path: str) -> str:
-        config = AppConfig()
-        target_template = config.target_path_template
+        runtime_config = get_config()
+        target_template = runtime_config.target_path_template
         
         # Get UUID
         uuid = device.get("ID_FS_UUID", "unknown")

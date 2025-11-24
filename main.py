@@ -1,14 +1,18 @@
-import argparse
 import logging
 import socket
 import sys
 import threading
 import time
+from pathlib import Path
+from typing import Optional
 
+import typer
 import uvicorn
 
+from backend.config import init_config_store
 from backend.server import app
-from config import AppConfig
+
+logger = logging.getLogger(__name__)
 
 def configure_logging(log_path=None):
     root_logger = logging.getLogger()
@@ -57,52 +61,61 @@ def build_uvicorn_log_config(log_path):
     log_config["loggers"]["uvicorn.access"]["handlers"] = ["access"]
     return log_config
 
-def main():
-    parser = argparse.ArgumentParser(description="SD Card Backup Tool")
-    parser.add_argument("--headless", action="store_true", help="Run in headless mode (backend only)")
-    parser.add_argument("--host", help="Override GraphQL host from config")
-    parser.add_argument(
-        "--port",
-        type=int,
-        help="Override GraphQL port from config (use 0 for dynamic allocation)",
+def main(
+    headless: bool = typer.Option(False, "--headless", help="Run backend only"),
+    listen_addr: str = typer.Option("127.0.0.1", "--listen-addr", help="GraphQL listen address"),
+    listen_port: int = typer.Option(0, "--listen-port", help="GraphQL listen port (0 = auto)"),
+    log_path: Optional[Path] = typer.Option(None, "--log-path", help="Path to log file"),
+    db_path: Path = typer.Option(Path("sd-backup.db"), "--db-path", help="SQLite path for runtime config"),
+):
+    """
+    Start the SD Backup backend and optional Textual frontend.
+    """
+
+    init_config_store(str(db_path))
+
+    configure_logging(str(log_path) if log_path else None)
+
+    if listen_port == 0:
+        listen_port = get_free_port()
+
+    log_path_str = str(log_path) if log_path else None
+    log_config = build_uvicorn_log_config(log_path_str)
+
+    logger.info(
+        "Starting SD Backup backend on %s:%s (headless=%s)",
+        listen_addr,
+        listen_port,
+        headless,
     )
-    args = parser.parse_args()
 
-    config = AppConfig()
-    host = args.host or config.graphql_host
-    port = config.graphql_port if args.port is None else args.port
-    log_path = config.log_path
-
-    configure_logging(log_path)
-
-    if port == 0:
-        port = get_free_port()
-
-    log_config = build_uvicorn_log_config(log_path)
-
-    backend_thread = threading.Thread(target=run_backend, args=(host, port, log_config), daemon=True)
+    backend_thread = threading.Thread(
+        target=run_backend,
+        args=(listen_addr, listen_port, log_config),
+        daemon=True,
+    )
     backend_thread.start()
-    if not log_path:
-        print(f"Backend started on http://{host}:{port}")
 
-    if args.headless:
-        print("Running in headless mode. Press Ctrl+C to exit.")
+    if not log_path_str:
+        typer.echo(f"Backend started on http://{listen_addr}:{listen_port}")
+
+    if headless:
+        typer.echo("Running in headless mode. Press Ctrl+C to exit.")
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("Exiting...")
+            typer.echo("Exiting...")
     else:
-        # Import frontend here to avoid dependency if headless (though we have them installed)
-        # and to ensure backend is up or at least starting.
-        # For Textual, we usually run it in the main thread.
         try:
             from frontend.app import SDBackupApp
-            app = SDBackupApp(host=host, port=port)
-            app.run()
+
+            ui_app = SDBackupApp(host=listen_addr, port=listen_port)
+            ui_app.run()
         except ImportError as e:
-            print(f"Failed to load frontend: {e}")
+            typer.echo(f"Failed to load frontend: {e}")
             sys.exit(1)
 
+
 if __name__ == "__main__":
-    main()
+    typer.run(main)

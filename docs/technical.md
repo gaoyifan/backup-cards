@@ -24,20 +24,18 @@ The SD Backup Tool is a Python application designed to automatically back up sto
     │         │         │          │
 ┌───▼───┐ ┌──▼───┐ ┌───▼────┐ ┌──▼────┐
 │ pyudev│ │rsync │ │ config │ │ logs  │
-│monitor│ │backup│ │ YAML   │ │ file  │
+│monitor│ │backup│ │ SQLite │ │ file  │
 └───────┘ └──────┘ └────────┘ └───────┘
 ```
 
 ### Component Overview
 
 #### 1. Entry Point (`main.py`)
-- Single entry point for the application
-- Parses command-line arguments (`--headless` flag, optional `--host`/`--port` overrides)
-- Loads configuration from `config.yaml`
-- Configures logging (file or stderr)
-- Allocates dynamic port (if configured as 0)
-- Starts backend in a separate thread
-- Optionally starts frontend (Textual UI)
+- Single entry point for the application implemented with Typer.
+- CLI options: `--headless`, `--listen-addr`, `--listen-port` (`0` = auto), `--log-path`, `--db-path`.
+- Initializes the SQLite runtime config store via `init_config_store(db_path)`.
+- Configures logging (file when `--log-path` is provided, otherwise stderr).
+- Starts FastAPI/GraphQL backend in a background thread and optionally launches the Textual UI.
 
 #### 2. Backend (`src/backend/`)
 
@@ -84,10 +82,10 @@ The SD Backup Tool is a Python application designed to automatically back up sto
 - Settings: Configuration editor
 - ManualBackupDialog: Input dialog for manual backups
 
-#### 4. Configuration (`src/config.py`)
-- YAML-based configuration management
-- Default values for all settings
-- Provides `load_config()`, `save_config()`, `update_config()`
+#### 4. Configuration (`src/backend/config.py`)
+- SQLAlchemy models and helpers around a SQLite runtime config database (schema in `src/backend/db.py`)
+- Ensures a default config row exists with base templates
+- Provides helpers to read/update templates for the backend and GraphQL layer
 
 ## Data Flow
 
@@ -117,16 +115,12 @@ The SD Backup Tool is a Python application designed to automatically back up sto
 
 ## Configuration
 
-### Configuration File (`config.yaml`)
+### Runtime Config Store (SQLite)
 
-All configuration is stored in `config.yaml` in the project root.
-
-**Fields:**
-- `graphql_host` (default: `127.0.0.1`) - Backend listen address
-- `graphql_port` (default: `0`) - Backend port (0 = dynamic allocation)
-- `log_path` (default: `null`) - Log file path (null = stderr)
-- `mount_point_template` (default: `/media/sd-backup-{uuid}`) - Mount point template
-- `target_path_template` (default: `~/backups/{date}`) - Backup target template
+- Typer parses CLI flags (`--listen-addr`, `--listen-port`, `--log-path`, `--db-path`, `--headless`) at startup.
+- `src/backend/config.py` initializes a SQLite database (default `sd-backup.db`) and stores `mount_point_template` plus `target_path_template` in the `config` table.
+- GraphQL `config` queries expose only these templates, while CLI parameters remain runtime-only.
+- The `updateConfig` mutation writes directly to the SQLite store to persist template changes.
 
 ### Template Variables
 
@@ -164,7 +158,7 @@ All Python loggers inherit from the root logger configuration.
 
 ## Dynamic Port Allocation
 
-When `graphql_port` is set to `0`:
+When `--listen-port` is set to `0`:
 
 1. `get_free_port()` finds an available port
 2. Port is passed to both backend and frontend
@@ -174,12 +168,12 @@ When `graphql_port` is set to `0`:
 
 ### Full Mode (Backend + Frontend)
 ```bash
-uv run main.py
+uv run python main.py
 ```
 
 ### Headless Mode (Backend Only)
 ```bash
-uv run main.py --headless
+uv run python main.py --headless
 ```
 
 ## Development
@@ -188,13 +182,11 @@ uv run main.py --headless
 ```
 sd-backup/
 ├── src/
-│   ├── backend/       # Backend code
+│   ├── backend/       # Backend code (config/db live here)
 │   ├── frontend/      # Frontend code
-│   ├── config.py      # Configuration management
-│   └── main.py        # Entry point
+│   └── main.py        # Entry point (Typer CLI)
 ├── tests/             # Test files
 ├── docs/              # Documentation
-├── config.yaml        # Configuration file
 └── pyproject.toml     # Project metadata
 ```
 
@@ -224,7 +216,8 @@ Core dependencies:
 - `pyudev` - Device detection
 - `textual` - Terminal UI
 - `gql[websockets]` - GraphQL client
-- `pyyaml` - YAML parsing
+- `sqlalchemy` - SQLite ORM for runtime templates
+- `typer` - CLI framework
 
 ## Security Considerations
 
@@ -236,7 +229,7 @@ Core dependencies:
 
 **File Permissions:**
 - Backup files inherit source permissions
-- Config file should be readable only by root
+- The SQLite config DB (`--db-path`) should live in a root-owned directory
 
 ## Performance
 

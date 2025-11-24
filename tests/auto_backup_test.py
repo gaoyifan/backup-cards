@@ -26,13 +26,13 @@ class TestAutoBackup(unittest.TestCase):
 
     @patch("backend.backup.subprocess.run")
     @patch("backend.backup.subprocess.Popen")
-    @patch("backend.backup.AppConfig")
-    def test_auto_backup_flow(self, mock_AppConfig, mock_popen, mock_run):
+    @patch("backend.backup.get_config")
+    def test_auto_backup_flow(self, mock_get_config, mock_popen, mock_run):
         # Mock config
-        mock_config_instance = MagicMock()
-        mock_config_instance.mount_point_template = self.mount_point
-        mock_config_instance.target_path_template = os.path.join(self.target_base, "{date}")
-        mock_AppConfig.return_value = mock_config_instance
+        mock_config = MagicMock()
+        mock_config.mount_point_template = self.mount_point
+        mock_config.target_path_template = os.path.join(self.target_base, "{date}")
+        mock_get_config.return_value = mock_config
         
         # Mock rsync process
         mock_process = MagicMock()

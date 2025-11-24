@@ -1,8 +1,8 @@
 import strawberry
 import asyncio
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, List
 from strawberry.types import Info
-from config import AppConfig, update_config
+from backend.config import get_config, update_config as update_config_store
 from backend.backup import BackupManager
 import logging
 
@@ -20,8 +20,6 @@ def add_log(message: str):
 class Config:
     mount_point_template: str
     target_path_template: str
-    graphql_host: str
-    graphql_port: int
 
 @strawberry.type
 class LogEntry:
@@ -36,12 +34,10 @@ class BackupStatus:
 class Query:
     @strawberry.field
     def config(self) -> Config:
-        c = AppConfig()
+        runtime_config = get_config()
         return Config(
-            mount_point_template=c.mount_point_template,
-            target_path_template=c.target_path_template,
-            graphql_host=c.graphql_host,
-            graphql_port=c.graphql_port,
+            mount_point_template=runtime_config.mount_point_template,
+            target_path_template=runtime_config.target_path_template,
         )
 
     @strawberry.field
@@ -89,13 +85,15 @@ class Mutation:
 
     @strawberry.mutation
     def update_config(self, key: str, value: str) -> str:
+        key_map = {
+            "mount_point_template": "mount_point_template",
+            "target_path_template": "target_path_template",
+        }
+        if key not in key_map:
+            return "Unsupported config key"
+        kwargs = {key_map[key]: value}
         try:
-            # Basic type conversion if needed
-            if key == "graphql_port":
-                val = int(value)
-            else:
-                val = value
-            update_config(key, val)
+            update_config_store(**kwargs)
             return "Config updated"
         except Exception as e:
             return f"Failed to update config: {e}"

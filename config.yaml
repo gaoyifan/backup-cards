@@ -1,5 +1,0 @@
-graphql_host: 127.0.0.1
-graphql_port: 0
-  #log_path: backend.log
-mount_point_template: /media/sd-backup-{uuid}
-target_path_template: ~/backups/{date}

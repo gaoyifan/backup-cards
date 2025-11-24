@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - Single entry: `main.py` configures logging, allocates port (0 for dynamic), starts FastAPI/GraphQL backend and Textual UI. Run only via `uv run python main.py`.
-- Backend in `src/backend/` (`server.py`, `schema.py`, `backup.py`, `monitor.py`); frontend in `src/frontend/` (`app.py`, `screens.py`, `client.py`). Config loader: `src/config.py`, user config: `config.yaml`. Docs in `docs/`, tests in `tests/`.
+- Backend in `src/backend/` (`server.py`, `schema.py`, `backup.py`, `monitor.py`, `config.py`, `db.py`); frontend in `src/frontend/` (`app.py`, `screens.py`, `client.py`). Config store: `src/backend/config.py` (SQLite via `--db-path`). Docs in `docs/`, tests in `tests/`.
 
 ## Build, Test, and Development Commands
 - Install deps: `uv sync`.

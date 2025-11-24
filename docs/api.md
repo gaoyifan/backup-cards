@@ -24,8 +24,6 @@ Configuration object.
 type Config {
   mountPointTemplate: String!
   targetPathTemplate: String!
-  graphqlHost: String!
-  graphqlPort: Int!
 }
 ```
 
@@ -62,8 +60,6 @@ query {
   config {
     mountPointTemplate
     targetPathTemplate
-    graphqlHost
-    graphqlPort
   }
 }
 ```
@@ -76,9 +72,7 @@ query {
   "data": {
     "config": {
       "mountPointTemplate": "/media/sd-backup-{uuid}",
-      "targetPathTemplate": "~/backups/{date}",
-      "graphqlHost": "127.0.0.1",
-      "graphqlPort": 0
+      "targetPathTemplate": "~/backups/{date}"
     }
   }
 }
@@ -219,9 +213,6 @@ mutation($key: String!, $value: String!) {
 **Valid Keys:**
 - `mount_point_template`
 - `target_path_template`
-- `graphql_host`
-- `graphql_port`
-- `log_path`
 
 **Example:**
 ```graphql
@@ -243,8 +234,8 @@ mutation {
 ```
 
 **Notes:**
-- Changes are immediately persisted to `config.yaml`
-- Some changes (like port) require restart to take effect
+- Changes are immediately persisted to the SQLite runtime config (`--db-path`)
+- CLI options such as listen address/port still require a restart to take effect
 
 ### Subscriptions
 
