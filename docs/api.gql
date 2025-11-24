@@ -1,0 +1,56 @@
+enum BackupStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum BackupType {
+  AUTO
+  MANUAL
+}
+
+type BackupTask {
+  backupId: ID!
+  source: String!  # Directory or DevicePath
+  target: String!
+  status: BackupStatus!
+  type: BackupType!
+  startedAt: DateTime!
+  finishedAt: DateTime
+}
+
+type BackupProgress {
+  sizeCompleted: Int!
+  sizeTotal: Int!
+}
+
+type Device {
+  devicePath: String!
+  mountPoint: String
+}
+
+type Config {
+  autoBackupEnabled: Boolean
+  autoBackupTargetPath: String  # path with template variables
+}
+
+type Query {
+  config: Config!
+  backupTasks(limit: Int, offset: Int): [BackupTask!]!
+  backupTask(backupId: ID!): BackupTask
+  availableDevices: [Device!]!
+  listDirectory(path: String!): [String!]!  # used for frontend path typing hints
+}
+
+type Mutation {
+  startManualBackup(source: String!, target: String!): ID!  # source can be directory or device path
+  cancelBackup(backupId: ID!): Boolean!
+  updateConfig(config: Config!): Boolean!
+  reload(force: Boolean): Boolean!  # Reload config and restart backend
+}
+
+type Subscription {
+  progress(backupId: ID!): BackupProgress!
+}
