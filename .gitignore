@@ -11,3 +11,6 @@ wheels/
 
 # Log files
 *.log
+
+# Database
+*.db

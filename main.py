@@ -86,7 +86,7 @@ async def main(
     log_path: Optional[Path] = typer.Option(None, "--log-path", help="Path to log file"),
     db_path: Path = typer.Option(Path("sd-backup.db"), "--db-path", help="SQLite path for runtime config"),
 ):
-    init_config_store(str(db_path))
+    await init_config_store(str(db_path))
 
     configure_logging(str(log_path) if log_path else None)
 

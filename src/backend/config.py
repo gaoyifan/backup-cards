@@ -3,71 +3,65 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from backend.db import Config as ConfigTable, create_schema, init_db, session_scope
 
-from backend.db import Config as ConfigTable, create_schema, get_session, init_db
-
-DEFAULT_MOUNT_TEMPLATE = "/media/sd-backup-{uuid}"
-DEFAULT_TARGET_TEMPLATE = "~/backups/{date}"
+DEFAULT_AUTO_TEMPLATE = "~/sd-backups/{date}-{uuid_short}"
 
 
 @dataclass
 class Config:
-    mount_point_template: str
-    target_path_template: str
+    auto_backup_enabled: bool
+    auto_backup_target_path: str
 
 
-def init_config_store(db_path: str) -> None:
+async def init_config_store(db_path: str) -> None:
     """Prepare the SQLite store and ensure a default config row exists."""
-    init_db(db_path)
-    create_schema()
+    await init_db(db_path)
+    await create_schema()
 
-    with session_scope() as session:
-        config = session.get(ConfigTable, 1)
+    async with session_scope() as session:
+        config = await session.get(ConfigTable, 1)
         if config is None:
             config = ConfigTable(
                 id=1,
-                mount_point_template=DEFAULT_MOUNT_TEMPLATE,
-                target_path_template=DEFAULT_TARGET_TEMPLATE,
+                auto_backup_enabled=False,
+                auto_backup_target_path=DEFAULT_AUTO_TEMPLATE,
             )
             session.add(config)
-            session.commit()
 
 
-def session_scope() -> Session:
-    return get_session()
-
-
-def get_config() -> Config:
-    with session_scope() as session:
-        config = session.get(ConfigTable, 1)
+async def get_config() -> Config:
+    async with session_scope() as session:
+        config = await session.get(ConfigTable, 1)
         if config is None:
             raise RuntimeError("Config missing. Did init_config_store run?")
         return Config(
-            mount_point_template=config.mount_point_template,
-            target_path_template=config.target_path_template,
+            auto_backup_enabled=config.auto_backup_enabled,
+            auto_backup_target_path=config.auto_backup_target_path,
         )
 
 
-def update_config(
-    *, mount_point_template: Optional[str] = None, target_path_template: Optional[str] = None
+async def update_config(
+    *,
+    auto_backup_enabled: Optional[bool] = None,
+    auto_backup_target_path: Optional[str] = None,
 ) -> Config:
-    with session_scope() as session:
-        config = session.get(ConfigTable, 1)
+    async with session_scope() as session:
+        config = await session.get(ConfigTable, 1)
         if config is None:
             raise RuntimeError("Config missing. Did init_config_store run?")
 
-        if mount_point_template is not None:
-            config.mount_point_template = mount_point_template
-        if target_path_template is not None:
-            config.target_path_template = target_path_template
+        if auto_backup_enabled is not None:
+            config.auto_backup_enabled = auto_backup_enabled
+        if auto_backup_target_path is not None:
+            config.auto_backup_target_path = auto_backup_target_path
 
         session.add(config)
-        session.commit()
-        session.refresh(config)
+        await session.flush()
+        await session.refresh(config)
 
         return Config(
-            mount_point_template=config.mount_point_template,
-            target_path_template=config.target_path_template,
+            auto_backup_enabled=config.auto_backup_enabled,
+            auto_backup_target_path=config.auto_backup_target_path,
         )
 

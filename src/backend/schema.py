@@ -1,127 +1,165 @@
-import asyncio
+from __future__ import annotations
+
 import logging
-from typing import AsyncGenerator, List, Set
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import AsyncGenerator, List, Optional
 
 import strawberry
 
 from backend.backup import BackupManager
-from backend.config import get_config, update_config as update_config_store
+from backend.config import Config, get_config, update_config
+from backend.devices import list_available_devices
+from backend.models import BackupStatus, BackupTaskDTO, BackupType, DeviceInfo
 
 logger = logging.getLogger(__name__)
 
 backup_manager = BackupManager()
-logs: List[str] = []
-_background_tasks: Set[asyncio.Task] = set()
+
+BackupStatusEnum = strawberry.enum(BackupStatus, name="BackupStatus")
+BackupTypeEnum = strawberry.enum(BackupType, name="BackupType")
 
 
-def add_log(message: str):
-    logs.append(message)
+@strawberry.type
+class ConfigType:
+    auto_backup_enabled: bool = strawberry.field(name="autoBackupEnabled")
+    auto_backup_target_path: str = strawberry.field(name="autoBackupTargetPath")
 
 
-def _track_background_task(task: asyncio.Task):
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
+@strawberry.input
+class ConfigInput:
+    auto_backup_enabled: Optional[bool] = strawberry.field(name="autoBackupEnabled", default=None)
+    auto_backup_target_path: Optional[str] = strawberry.field(
+        name="autoBackupTargetPath", default=None
+    )
 
 
-async def _run_manual_backup(source: str, target: str):
+@strawberry.type
+class BackupTaskType:
+    backup_id: strawberry.ID = strawberry.field(name="backupId")
+    source: str
+    target: str
+    status: BackupStatusEnum
+    type: BackupTypeEnum
+    started_at: datetime = strawberry.field(name="startedAt")
+    finished_at: Optional[datetime] = strawberry.field(name="finishedAt")
+    size_total: int = strawberry.field(name="sizeTotal")
+    size_completed: int = strawberry.field(name="sizeCompleted")
+
+
+@strawberry.type
+class BackupProgressType:
+    size_completed: int = strawberry.field(name="sizeCompleted")
+    size_total: int = strawberry.field(name="sizeTotal")
+
+
+@strawberry.type
+class DeviceType:
+    device_path: str = strawberry.field(name="devicePath")
+    mount_point: Optional[str] = strawberry.field(name="mountPoint")
+
+
+def _config_to_type(config: Config) -> ConfigType:
+    return ConfigType(
+        auto_backup_enabled=config.auto_backup_enabled,
+        auto_backup_target_path=config.auto_backup_target_path,
+    )
+
+
+def _task_to_type(task: BackupTaskDTO) -> BackupTaskType:
+    started_at = task.started_at or datetime.utcnow()
+    return BackupTaskType(
+        backup_id=task.backup_id,
+        source=task.source,
+        target=task.target,
+        status=task.status,
+        type=task.type,
+        started_at=started_at,
+        finished_at=task.finished_at,
+        size_total=task.size_total,
+        size_completed=task.size_completed,
+    )
+
+
+def _device_to_type(device: DeviceInfo) -> DeviceType:
+    return DeviceType(device_path=device.device_path, mount_point=device.mount_point)
+
+
+def _safe_list_directory(path: str) -> List[str]:
+    path_obj = Path(path).expanduser()
+    if not path_obj.exists():
+        return []
+    if path_obj.is_file():
+        path_obj = path_obj.parent
     try:
-        add_log(f"Starting backup from {source} to {target}")
-        await backup_manager.perform_backup(source, target)
-        add_log("Backup finished successfully")
-    except Exception as exc:
-        add_log(f"Backup failed: {exc}")
-        logger.exception("Manual backup failed")
+        entries = os.listdir(path_obj)
+    except OSError as exc:
+        logger.warning("Unable to list directory %s: %s", path_obj, exc)
+        return []
+    return sorted(entries)
 
-@strawberry.type
-class Config:
-    mount_point_template: str
-    target_path_template: str
-
-@strawberry.type
-class LogEntry:
-    message: str
-
-@strawberry.type
-class BackupStatus:
-    active: bool
-    message: str
 
 @strawberry.type
 class Query:
     @strawberry.field
-    def config(self) -> Config:
-        runtime_config = get_config()
-        return Config(
-            mount_point_template=runtime_config.mount_point_template,
-            target_path_template=runtime_config.target_path_template,
-        )
+    async def config(self) -> ConfigType:
+        runtime_config = await get_config()
+        return _config_to_type(runtime_config)
 
     @strawberry.field
-    def logs(self) -> List[LogEntry]:
-        return [LogEntry(message=m) for m in logs]
+    async def backup_tasks(self, limit: int = 20, offset: int = 0) -> List[BackupTaskType]:
+        tasks = await backup_manager.list_tasks(limit=limit, offset=offset)
+        return [_task_to_type(task) for task in tasks]
 
     @strawberry.field
-    async def current_status(self) -> BackupStatus:
-        active = backup_manager.is_active()
-        return BackupStatus(active=active, message="Backup in progress" if active else "Idle")
+    async def backup_task(self, backup_id: strawberry.ID) -> Optional[BackupTaskType]:
+        task = await backup_manager.get_task(str(backup_id))
+        if task is None:
+            return None
+        return _task_to_type(task)
+
+    @strawberry.field
+    def available_devices(self) -> List[DeviceType]:
+        devices = list_available_devices()
+        return [_device_to_type(device) for device in devices]
+
+    @strawberry.field
+    def list_directory(self, path: str) -> List[str]:
+        return _safe_list_directory(path)
+
 
 @strawberry.type
 class Mutation:
     @strawberry.mutation
-    async def start_manual_backup(self, source: str, target: str) -> str:
-        if backup_manager.is_active():
-            return "Backup already in progress"
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-
-        try:
-            task = loop.create_task(_run_manual_backup(source, target))
-            _track_background_task(task)
-            return "Backup started"
-        except Exception as e:
-            logger.error(f"Failed to schedule manual backup: {e}")
-            return f"Failed to start backup: {e}"
+    async def start_manual_backup(self, source: str, target: str) -> strawberry.ID:
+        backup_id = await backup_manager.start_manual_backup(source, target)
+        return strawberry.ID(backup_id)
 
     @strawberry.mutation
-    async def cancel_backup(self) -> str:
-        try:
-            await backup_manager.cancel_backup()
-            add_log("Backup cancelled by user")
-            return "Backup cancelled"
-        except Exception as e:
-            return f"Failed to cancel backup: {e}"
+    async def cancel_backup(self, backup_id: strawberry.ID) -> bool:
+        return await backup_manager.cancel_backup(str(backup_id))
 
     @strawberry.mutation
-    def update_config(self, key: str, value: str) -> str:
-        key_map = {
-            "mount_point_template": "mount_point_template",
-            "target_path_template": "target_path_template",
-        }
-        if key not in key_map:
-            return "Unsupported config key"
-        kwargs = {key_map[key]: value}
-        try:
-            update_config_store(**kwargs)
-            return "Config updated"
-        except Exception as e:
-            return f"Failed to update config: {e}"
+    async def update_config(self, config: ConfigInput) -> bool:
+        await update_config(
+            auto_backup_enabled=config.auto_backup_enabled,
+            auto_backup_target_path=config.auto_backup_target_path,
+        )
+        return True
+
+    @strawberry.mutation
+    async def reload(self, force: Optional[bool] = False) -> bool:
+        await backup_manager.reload(force=bool(force))
+        return True
+
 
 @strawberry.type
 class Subscription:
     @strawberry.subscription
-    async def backup_progress(self) -> AsyncGenerator[str, None]:
-        # Simple polling for logs or status changes for now
-        # In a real rsync parsing scenario, we'd yield progress percentages.
-        # Here we just yield new logs or status.
-        last_idx = len(logs)
-        while True:
-            if len(logs) > last_idx:
-                for i in range(last_idx, len(logs)):
-                    yield logs[i]
-                last_idx = len(logs)
-            await asyncio.sleep(0.5)
+    async def progress(self, backup_id: strawberry.ID) -> AsyncGenerator[BackupProgressType, None]:
+        async for size_completed, size_total in backup_manager.subscribe_progress(str(backup_id)):
+            yield BackupProgressType(size_completed=size_completed, size_total=size_total)
+
 
 schema = strawberry.Schema(query=Query, mutation=Mutation, subscription=Subscription)

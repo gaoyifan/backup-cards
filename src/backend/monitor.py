@@ -68,5 +68,4 @@ class DeviceMonitor:
         self.running = False
         if self.loop:
             self.loop.remove_reader(self.monitor.fileno())
-        self.monitor.stop()
         logger.info("DeviceMonitor stopped.")

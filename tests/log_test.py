@@ -43,12 +43,12 @@ def test_logging():
         if os.path.exists(log_path):
             with open(log_path, "r") as f:
                 logs = f.read()
-                if "Backend started on" not in logs and "Uvicorn running on" not in logs:
+                if "Starting SD Backup backend on" not in logs:
                     raise AssertionError("Expected backend logs in log file.")
         else:
             raise AssertionError("Log file not created.")
 
-        if "Backend started on" in stdout or "INFO:" in stderr:
+        if "Starting SD Backup backend on" in stdout or "INFO:" in stderr:
             raise AssertionError("Unexpected logs in stdout/stderr.")
 
 if __name__ == "__main__":
