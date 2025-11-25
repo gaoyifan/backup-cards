@@ -103,13 +103,6 @@ class BackupManager:
                 await process.wait()
         return True
 
-    async def reload(self, force: bool = False) -> None:
-        if force:
-            logger.info("Force reload requested.")
-        # In this implementation we simply re-read the config to ensure it is valid.
-        await get_config()
-        logger.info("Runtime configuration reloaded.")
-
     def subscribe_progress(self, backup_id: str) -> AsyncIterator[tuple[int, int]]:
         async def iterator():
             task = await self.get_task(backup_id)

@@ -148,11 +148,6 @@ class Mutation:
         )
         return True
 
-    @strawberry.mutation
-    async def reload(self, force: Optional[bool] = False) -> bool:
-        await backup_manager.reload(force=bool(force))
-        return True
-
 
 @strawberry.type
 class Subscription:

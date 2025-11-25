@@ -48,7 +48,6 @@ type Mutation {
   startManualBackup(source: String!, target: String!): ID!  # source can be directory or device path
   cancelBackup(backupId: ID!): Boolean!
   updateConfig(config: Config!): Boolean!
-  reload(force: Boolean): Boolean!  # Reload config and restart backend
 }
 
 type Subscription {
