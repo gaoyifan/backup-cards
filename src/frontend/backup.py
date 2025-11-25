@@ -3,26 +3,21 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 from textual import containers, on
 from textual.app import ComposeResult
-from textual.widgets import Button, Footer, Input, Label, Markdown, Select, Static
+from textual.binding import Binding
+from textual.validation import Length
+from textual.widgets import Button, Footer, Input, Label, Markdown, Select, Rule
 
 from frontend.page import PageScreen
 
 
 BACKUP_MD = """\
-# Start Manual Backup
+# 🚀 Start Manual Backup
 
-Create a new backup by selecting a source device or directory and specifying a target location.
+Create a new backup by selecting a source and target location.
 
-"""
-
-FORM_MD = """\
-## Backup Configuration
-
-Fill in the source and target paths below, then click Start Backup.
 """
 
 
@@ -35,17 +30,30 @@ class DeviceSelector(containers.VerticalGroup):
         padding: 1 2;
         background: $boost;
         margin: 1 0;
+        border-left: thick $accent;
         
-        Label { margin-bottom: 1; }
-        Select { width: 100%; }
+        #device-title {
+            text-style: bold;
+            margin-bottom: 1;
+        }
+        
+        #device-hint {
+            color: $text-muted;
+            margin-bottom: 1;
+        }
+        
+        Select {
+            width: 100%;
+        }
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Label("Select Source Device (optional)")
+        yield Label("💿 Quick Select Device", id="device-title")
+        yield Label("Choose a connected device to auto-fill the source path", id="device-hint")
         yield Select(
             [],
-            prompt="Choose a device...",
+            prompt="Select a device...",
             id="device-select",
             allow_blank=True,
         )
@@ -58,12 +66,15 @@ class DeviceSelector(containers.VerticalGroup):
             path = device.get("devicePath", "")
             mount = device.get("mountPoint", "")
             if mount:
-                label = f"{path} ({mount})"
-                value = mount  # Use mount point as source
+                label = f"💿 {path}  →  {mount}"
+                value = mount
             else:
-                label = f"{path} (not mounted)"
+                label = f"💿 {path}  [dim](not mounted)[/dim]"
                 value = path
             options.append((label, value))
+        
+        if not options:
+            options = [("No devices available", "")]
         select.set_options(options)
 
 
@@ -77,48 +88,83 @@ class BackupForm(containers.VerticalGroup):
         background: $boost;
         margin: 1 0;
         
-        .form-row {
+        #form-title {
+            text-style: bold;
+            margin-bottom: 1;
+        }
+        
+        .form-field {
             height: auto;
             margin-bottom: 1;
         }
         
-        .form-label {
-            width: 100%;
+        .field-label {
+            margin-bottom: 0;
+            color: $text;
+        }
+        
+        .field-hint {
+            color: $text-muted;
+            text-style: italic;
             margin-bottom: 0;
         }
         
         Input {
             width: 100%;
+            margin-top: 0;
+        }
+        
+        Input.-valid {
+            border: tall $success;
+        }
+        
+        Input.-invalid {
+            border: tall $error;
         }
         
         #button-row {
-            margin-top: 1;
+            margin-top: 2;
         }
         
-        #status-label {
+        #start-btn {
+            margin-right: 1;
+        }
+        
+        #status-container {
+            height: auto;
             margin-top: 1;
-            text-style: italic;
+            padding: 1;
+            background: $surface;
+            
+            &.hidden { display: none; }
+            &.success { border-left: thick $success; }
+            &.error { border-left: thick $error; }
+            &.info { border-left: thick $accent; }
         }
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Markdown(FORM_MD)
-        with containers.VerticalGroup(classes="form-row"):
-            yield Label("Source Path", classes="form-label")
+        yield Label("📝 Backup Details", id="form-title")
+        with containers.VerticalGroup(classes="form-field"):
+            yield Label("Source Path", classes="field-label")
+            yield Label("Directory or mount point to backup", classes="field-hint")
             yield Input(
-                placeholder="/path/to/source/directory",
+                placeholder="/media/sdcard or /home/user/data",
                 id="source-input",
+                validators=[Length(minimum=1)],
             )
-        with containers.VerticalGroup(classes="form-row"):
-            yield Label("Target Path", classes="form-label")
+        with containers.VerticalGroup(classes="form-field"):
+            yield Label("Target Path", classes="field-label")
+            yield Label("Where to save the backup", classes="field-hint")
             yield Input(
-                placeholder="/path/to/target/directory",
+                placeholder="/backups/my-backup",
                 id="target-input",
+                validators=[Length(minimum=1)],
             )
         with containers.HorizontalGroup(id="button-row"):
             yield Button(
-                "Start Backup",
+                "▶ Start Backup",
                 id="start-btn",
                 variant="success",
                 tooltip="Start the backup process",
@@ -127,9 +173,10 @@ class BackupForm(containers.VerticalGroup):
                 "Clear",
                 id="clear-btn",
                 variant="default",
-                tooltip="Clear the form",
+                tooltip="Clear all fields",
             )
-        yield Label("", id="status-label")
+        with containers.VerticalGroup(id="status-container", classes="hidden"):
+            yield Label("", id="status-label")
 
 
 class BackupScreen(PageScreen):
@@ -141,10 +188,11 @@ class BackupScreen(PageScreen):
         
         #content {
             width: 100%;
-            max-width: 100;
+            max-width: 90;
             padding: 1 2;
             height: 1fr;
             overflow-y: auto;
+            scrollbar-gutter: stable;
         }
         
         Markdown {
@@ -152,8 +200,16 @@ class BackupScreen(PageScreen):
             margin: 0;
             padding: 0;
         }
+        
+        Rule {
+            margin: 1 0;
+        }
     }
     """
+
+    BINDINGS = [
+        Binding("ctrl+enter", "submit", "Start Backup", show=False),
+    ]
 
     def __init__(self) -> None:
         super().__init__()
@@ -163,6 +219,7 @@ class BackupScreen(PageScreen):
         with containers.VerticalScroll(id="content"):
             yield Markdown(BACKUP_MD)
             yield DeviceSelector()
+            yield Rule()
             yield BackupForm()
         yield Footer()
 
@@ -189,32 +246,53 @@ class BackupScreen(PageScreen):
         except Exception:
             pass
 
+    def _show_status(self, message: str, status_type: str = "info") -> None:
+        """Show status message."""
+        container = self.query_one("#status-container", containers.VerticalGroup)
+        label = self.query_one("#status-label", Label)
+        
+        container.remove_class("hidden", "success", "error", "info")
+        container.add_class(status_type)
+        label.update(message)
+
+    def _hide_status(self) -> None:
+        """Hide status message."""
+        container = self.query_one("#status-container", containers.VerticalGroup)
+        container.add_class("hidden")
+
     @on(Select.Changed, "#device-select")
     def on_device_selected(self, event: Select.Changed) -> None:
         """Handle device selection - populate source input."""
-        if event.value and event.value != Select.BLANK:
+        if event.value and event.value != Select.BLANK and event.value != "":
             source_input = self.query_one("#source-input", Input)
             source_input.value = str(event.value)
+            source_input.focus()
+            self._hide_status()
 
     @on(Button.Pressed, "#start-btn")
     async def on_start_pressed(self) -> None:
         """Handle start backup button press."""
+        await self._start_backup()
+
+    async def _start_backup(self) -> None:
+        """Start the backup process."""
         source_input = self.query_one("#source-input", Input)
         target_input = self.query_one("#target-input", Input)
-        status_label = self.query_one("#status-label", Label)
 
         source = source_input.value.strip()
         target = target_input.value.strip()
 
         if not source:
-            status_label.update("[red]Error: Source path is required[/red]")
+            self._show_status("⚠️  Source path is required", "error")
+            source_input.focus()
             return
 
         if not target:
-            status_label.update("[red]Error: Target path is required[/red]")
+            self._show_status("⚠️  Target path is required", "error")
+            target_input.focus()
             return
 
-        status_label.update("Starting backup...")
+        self._show_status("⏳ Starting backup...", "info")
 
         client = self.app.client
         mutation = """
@@ -228,25 +306,30 @@ class BackupScreen(PageScreen):
             )
             backup_id = result.get("startManualBackup")
             if backup_id:
-                status_label.update(
-                    f"[green]Backup started! ID: {backup_id[:8]}...[/green]"
+                self._show_status(
+                    f"✓ Backup started successfully!\n  ID: {backup_id[:16]}...",
+                    "success"
                 )
                 self.notify(
                     f"Backup started: {backup_id[:8]}",
-                    title="Backup Started",
+                    title="Success",
                     severity="information",
                 )
             else:
-                status_label.update("[yellow]Backup queued[/yellow]")
+                self._show_status("⚠️  Backup queued", "info")
         except Exception as e:
-            status_label.update(f"[red]Error: {e}[/red]")
-            self.notify(f"Failed to start backup: {e}", title="Error", severity="error")
+            self._show_status(f"✗ Failed to start backup:\n  {e}", "error")
+            self.notify(f"Failed: {e}", title="Error", severity="error")
 
     @on(Button.Pressed, "#clear-btn")
     def on_clear_pressed(self) -> None:
         """Handle clear button press."""
         self.query_one("#source-input", Input).value = ""
         self.query_one("#target-input", Input).value = ""
-        self.query_one("#status-label", Label).update("")
         self.query_one("#device-select", Select).value = Select.BLANK
+        self._hide_status()
+        self.query_one("#source-input", Input).focus()
 
+    def action_submit(self) -> None:
+        """Handle Ctrl+Enter to submit form."""
+        asyncio.create_task(self._start_backup())

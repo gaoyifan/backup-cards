@@ -6,98 +6,150 @@ import asyncio
 
 from textual import containers, on
 from textual.app import ComposeResult
-from textual.widgets import Button, Checkbox, Footer, Input, Label, Markdown
+from textual.widgets import Button, Checkbox, Footer, Input, Label, Markdown, Rule, Switch
 
 from frontend.page import PageScreen
 
 
 SETTINGS_MD = """\
-# Settings
+# ⚙️  Settings
 
-Configure your SD Backup preferences.
+Configure your SD Backup preferences and automation rules.
 
 """
 
-CONFIG_MD = """\
-## Auto Backup Configuration
+AUTO_BACKUP_MD = """\
+## Auto Backup
 
-Enable automatic backups when SD cards are inserted, and configure the target path template.
+Automatically start backups when SD cards are inserted.
+"""
 
-### Target Path Template Variables
+TEMPLATE_HELP_MD = """\
+### Path Template Variables
 
-- `{device}` - Device name (e.g., sda1)
-- `{date}` - Current date (YYYY-MM-DD)
-- `{time}` - Current time (HH-MM-SS)
+Use these placeholders in your target path:
 
-Example: `/backups/{device}/{date}` → `/backups/sda1/2024-01-15`
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `{device}` | Device name | sda1 |
+| `{date}` | Current date | 2024-01-15 |
+| `{time}` | Current time | 14-30-00 |
+
+**Example:** `/backups/{device}/{date}` → `/backups/sda1/2024-01-15`
 """
 
 
-class ConfigForm(containers.VerticalGroup):
-    """Configuration form widget."""
+class AutoBackupToggle(containers.HorizontalGroup):
+    """Auto backup toggle with status."""
 
     DEFAULT_CSS = """
-    ConfigForm {
+    AutoBackupToggle {
+        height: auto;
+        padding: 1 2;
+        background: $boost;
+        margin: 1 0;
+        border-left: thick $primary;
+        
+        #toggle-info {
+            width: 1fr;
+        }
+        
+        #toggle-title {
+            text-style: bold;
+        }
+        
+        #toggle-status {
+            color: $text-muted;
+        }
+        
+        Switch {
+            margin-left: 2;
+        }
+    }
+    """
+
+    def __init__(self, enabled: bool = False) -> None:
+        super().__init__()
+        self._enabled = enabled
+
+    def compose(self) -> ComposeResult:
+        with containers.VerticalGroup(id="toggle-info"):
+            yield Label("Enable Auto Backup", id="toggle-title")
+            yield Label("Automatically backup when devices connect", id="toggle-status")
+        yield Switch(value=self._enabled, id="auto-backup-switch", animate=True)
+
+
+class TargetTemplateForm(containers.VerticalGroup):
+    """Target template configuration."""
+
+    DEFAULT_CSS = """
+    TargetTemplateForm {
         height: auto;
         padding: 1 2;
         background: $boost;
         margin: 1 0;
         
-        .form-row {
-            height: auto;
+        #template-title {
+            text-style: bold;
             margin-bottom: 1;
         }
         
-        .form-label {
+        #template-label {
+            color: $text-muted;
             margin-bottom: 0;
         }
         
         Input {
             width: 100%;
+            margin-top: 0;
         }
         
-        Checkbox {
-            margin: 1 0;
-        }
-        
-        #button-row {
+        #preview-section {
             margin-top: 1;
+            padding: 1;
+            background: $surface;
         }
         
-        #status-label {
+        #preview-label {
+            color: $text-muted;
+        }
+        
+        #preview-value {
+            color: $text-accent;
+            text-style: bold;
+        }
+        
+        Markdown {
+            background: transparent;
             margin-top: 1;
-            text-style: italic;
+            padding: 0;
         }
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Markdown(CONFIG_MD)
-        yield Checkbox(
-            "Enable automatic backups",
-            id="auto-backup-checkbox",
-            tooltip="Automatically start backup when SD card is inserted",
+        yield Label("📁 Target Path Template", id="template-title")
+        yield Label("Where backups will be saved", id="template-label")
+        yield Input(
+            placeholder="/backups/{device}/{date}",
+            id="target-template-input",
         )
-        with containers.VerticalGroup(classes="form-row"):
-            yield Label("Target Path Template", classes="form-label")
-            yield Input(
-                placeholder="/backups/{device}/{date}",
-                id="target-template-input",
-            )
-        with containers.HorizontalGroup(id="button-row"):
-            yield Button(
-                "Save Settings",
-                id="save-btn",
-                variant="primary",
-                tooltip="Save configuration changes",
-            )
-            yield Button(
-                "Reset",
-                id="reset-btn",
-                variant="default",
-                tooltip="Reset to last saved values",
-            )
-        yield Label("", id="status-label")
+        with containers.VerticalGroup(id="preview-section"):
+            yield Label("Preview:", id="preview-label")
+            yield Label("", id="preview-value")
+        yield Markdown(TEMPLATE_HELP_MD)
+
+    def update_preview(self, template: str) -> None:
+        """Update the preview with example values."""
+        if not template:
+            self.query_one("#preview-value", Label).update("[dim]Enter a template above[/dim]")
+            return
+        
+        # Replace template variables with example values
+        preview = template.replace("{device}", "sda1")
+        preview = preview.replace("{date}", "2024-01-15")
+        preview = preview.replace("{time}", "14-30-00")
+        self.query_one("#preview-value", Label).update(f"[cyan]{preview}[/cyan]")
 
 
 class SettingsScreen(PageScreen):
@@ -113,12 +165,38 @@ class SettingsScreen(PageScreen):
             padding: 1 2;
             height: 1fr;
             overflow-y: auto;
+            scrollbar-gutter: stable;
         }
         
         Markdown {
             background: transparent;
             margin: 0;
             padding: 0;
+        }
+        
+        Rule {
+            margin: 1 0;
+        }
+        
+        #button-row {
+            height: auto;
+            margin: 2 0 1 0;
+        }
+        
+        #save-btn {
+            margin-right: 1;
+        }
+        
+        #status-container {
+            height: auto;
+            margin-top: 1;
+            padding: 1;
+            background: $surface;
+            
+            &.hidden { display: none; }
+            &.success { border-left: thick $success; }
+            &.error { border-left: thick $error; }
+            &.info { border-left: thick $accent; }
         }
     }
     """
@@ -130,7 +208,25 @@ class SettingsScreen(PageScreen):
     def compose(self) -> ComposeResult:
         with containers.VerticalScroll(id="content"):
             yield Markdown(SETTINGS_MD)
-            yield ConfigForm()
+            yield Markdown(AUTO_BACKUP_MD)
+            yield AutoBackupToggle()
+            yield Rule()
+            yield TargetTemplateForm()
+            with containers.HorizontalGroup(id="button-row"):
+                yield Button(
+                    "💾 Save Settings",
+                    id="save-btn",
+                    variant="primary",
+                    tooltip="Save configuration changes",
+                )
+                yield Button(
+                    "↺ Reset",
+                    id="reset-btn",
+                    variant="default",
+                    tooltip="Reset to last saved values",
+                )
+            with containers.VerticalGroup(id="status-container", classes="hidden"):
+                yield Label("", id="status-label")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -153,30 +249,58 @@ class SettingsScreen(PageScreen):
             config = result.get("config", {})
             self._original_config = config
 
-            # Update form fields
-            checkbox = self.query_one("#auto-backup-checkbox", Checkbox)
-            checkbox.value = config.get("autoBackupEnabled", False)
+            switch = self.query_one("#auto-backup-switch", Switch)
+            switch.value = config.get("autoBackupEnabled", False)
 
             input_field = self.query_one("#target-template-input", Input)
-            input_field.value = config.get("autoBackupTargetPath", "")
+            template = config.get("autoBackupTargetPath", "")
+            input_field.value = template
 
-            status_label = self.query_one("#status-label", Label)
-            status_label.update("Configuration loaded")
+            # Update preview
+            template_form = self.query_one(TargetTemplateForm)
+            template_form.update_preview(template)
+
+            self._show_status("✓ Configuration loaded", "success")
+            # Auto-hide after 2 seconds
+            asyncio.create_task(self._auto_hide_status())
         except Exception as e:
-            status_label = self.query_one("#status-label", Label)
-            status_label.update(f"[red]Failed to load config: {e}[/red]")
+            self._show_status(f"✗ Failed to load config: {e}", "error")
+
+    async def _auto_hide_status(self) -> None:
+        """Auto-hide status after delay."""
+        await asyncio.sleep(2)
+        self._hide_status()
+
+    def _show_status(self, message: str, status_type: str = "info") -> None:
+        """Show status message."""
+        container = self.query_one("#status-container", containers.VerticalGroup)
+        label = self.query_one("#status-label", Label)
+        
+        container.remove_class("hidden", "success", "error", "info")
+        container.add_class(status_type)
+        label.update(message)
+
+    def _hide_status(self) -> None:
+        """Hide status message."""
+        container = self.query_one("#status-container", containers.VerticalGroup)
+        container.add_class("hidden")
+
+    @on(Input.Changed, "#target-template-input")
+    def on_template_changed(self, event: Input.Changed) -> None:
+        """Update preview when template changes."""
+        template_form = self.query_one(TargetTemplateForm)
+        template_form.update_preview(event.value)
 
     @on(Button.Pressed, "#save-btn")
     async def on_save_pressed(self) -> None:
         """Handle save button press."""
-        checkbox = self.query_one("#auto-backup-checkbox", Checkbox)
+        switch = self.query_one("#auto-backup-switch", Switch)
         input_field = self.query_one("#target-template-input", Input)
-        status_label = self.query_one("#status-label", Label)
 
-        auto_enabled = checkbox.value
+        auto_enabled = switch.value
         target_template = input_field.value.strip()
 
-        status_label.update("Saving...")
+        self._show_status("⏳ Saving...", "info")
 
         client = self.app.client
         mutation = """
@@ -197,22 +321,25 @@ class SettingsScreen(PageScreen):
                     "autoBackupEnabled": auto_enabled,
                     "autoBackupTargetPath": target_template,
                 }
-                status_label.update("[green]Settings saved successfully![/green]")
+                self._show_status("✓ Settings saved successfully!", "success")
                 self.notify("Settings saved", title="Success", severity="information")
             else:
-                status_label.update("[yellow]Settings may not have been saved[/yellow]")
+                self._show_status("⚠️ Settings may not have been saved", "info")
         except Exception as e:
-            status_label.update(f"[red]Failed to save: {e}[/red]")
-            self.notify(f"Failed to save settings: {e}", title="Error", severity="error")
+            self._show_status(f"✗ Failed to save: {e}", "error")
+            self.notify(f"Failed: {e}", title="Error", severity="error")
 
     @on(Button.Pressed, "#reset-btn")
     def on_reset_pressed(self) -> None:
         """Handle reset button press."""
-        checkbox = self.query_one("#auto-backup-checkbox", Checkbox)
+        switch = self.query_one("#auto-backup-switch", Switch)
         input_field = self.query_one("#target-template-input", Input)
-        status_label = self.query_one("#status-label", Label)
 
-        checkbox.value = self._original_config.get("autoBackupEnabled", False)
-        input_field.value = self._original_config.get("autoBackupTargetPath", "")
-        status_label.update("Reset to last saved values")
+        switch.value = self._original_config.get("autoBackupEnabled", False)
+        template = self._original_config.get("autoBackupTargetPath", "")
+        input_field.value = template
 
+        template_form = self.query_one(TargetTemplateForm)
+        template_form.update_preview(template)
+
+        self._show_status("↺ Reset to last saved values", "info")
