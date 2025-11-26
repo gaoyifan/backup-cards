@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 cli = typer.Typer()
 
 
-def configure_logging(log_path=None):
+def configure_logging(log_path=None, log_level=logging.INFO):
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(log_level)
 
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
@@ -56,27 +56,6 @@ def get_free_port():
         return s.getsockname()[1]
 
 
-def build_uvicorn_log_config(log_path):
-    if not log_path:
-        return None
-
-    log_config = uvicorn.config.LOGGING_CONFIG.copy()
-    log_config["handlers"]["default"] = {
-        "class": "logging.FileHandler",
-        "filename": log_path,
-        "formatter": "default",
-    }
-    log_config["handlers"]["access"] = {
-        "class": "logging.FileHandler",
-        "filename": log_path,
-        "formatter": "access",
-    }
-    log_config["loggers"]["uvicorn"]["handlers"] = ["default"]
-    log_config["loggers"]["uvicorn.error"]["handlers"] = ["default"]
-    log_config["loggers"]["uvicorn.access"]["handlers"] = ["access"]
-    return log_config
-
-
 @cli.command()
 @partial(syncify, raise_sync_error=False)
 async def main(
@@ -85,16 +64,16 @@ async def main(
     listen_port: int = typer.Option(0, "--listen-port", help="GraphQL listen port (0 = auto)"),
     log_path: Optional[Path] = typer.Option(None, "--log-path", help="Path to log file"),
     db_path: Path = typer.Option(Path("sd-backup.db"), "--db-path", help="SQLite path for runtime config"),
+    log_level: str = typer.Option("INFO", "--log-level", help="Log level"),
 ):
     await init_config_store(str(db_path))
 
-    configure_logging(str(log_path) if log_path else None)
+    configure_logging(str(log_path) if log_path else None, log_level)
 
     if listen_port == 0:
         listen_port = get_free_port()
 
     log_path_str = str(log_path) if log_path else None
-    log_config = build_uvicorn_log_config(log_path_str)
 
     logger.info(
         "Starting SD Backup backend on %s:%s (headless=%s)",
@@ -108,13 +87,13 @@ async def main(
 
     if headless:
         typer.echo("Running in headless mode. Press Ctrl+C to exit.")
-        server = create_uvicorn_server(listen_addr, listen_port, log_config)
+        server = create_uvicorn_server(listen_addr, listen_port)
         try:
             await server.serve()
         except KeyboardInterrupt:
             typer.echo("Exiting...")
     else:
-        server = create_uvicorn_server(listen_addr, listen_port, log_config)
+        server = create_uvicorn_server(listen_addr, listen_port)
         backend_task = asyncio.create_task(server.serve())
         try:
             ui_app = SDBackupApp(host=listen_addr, port=listen_port)

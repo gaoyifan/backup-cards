@@ -76,7 +76,10 @@ class BackupManager:
         source_path = Path(source).expanduser().resolve()
         target_path = Path(target).expanduser().resolve()
 
+        logger.info("Starting manual backup from %s to %s", source_path, target_path)
+
         if not source_path.exists():
+            logger.info("Source path %s does not exist.", source_path)
             raise FileNotFoundError(f"Source path {source_path} does not exist.")
 
         return await self._enqueue_backup(
@@ -238,6 +241,7 @@ class BackupManager:
     ) -> str:
         size_total = 0
         backup_id = uuid.uuid4().hex
+        logger.debug("Creating task record for backup %s", backup_id)
         await self._create_task_record(
             backup_id=backup_id,
             source=str(source),
@@ -247,6 +251,7 @@ class BackupManager:
             size_total=size_total,
         )
 
+        logger.debug("Enqueuing backup %s", backup_id)
         job = asyncio.create_task(
             self._run_backup(
                 backup_id=backup_id,
