@@ -323,15 +323,33 @@ class TasksScreen(PageScreen):
 
             table.add_row(status_display, task_type, source, target, progress)
 
+    def _set_selected_task(self, task: Optional[dict]) -> None:
+        self._selected_task = task
+        self.query_one(TaskDetail).update_task(task)
+
+    def _update_selected_task_from_row_key(self, row_key) -> None:
+        table = self.query_one("#tasks-table", DataTable)
+        if not row_key:
+            self._set_selected_task(None)
+            return
+
+        try:
+            row_index = table.get_row_index(row_key)
+        except KeyError:
+            row_index = -1
+
+        task = self._tasks[row_index] if 0 <= row_index < len(self._tasks) else None
+        self._set_selected_task(task)
+
+    @on(DataTable.RowHighlighted)
+    def on_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Update task details whenever the highlight moves."""
+        self._update_selected_task_from_row_key(event.row_key)
+
     @on(DataTable.RowSelected)
     def on_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle row selection in the tasks table."""
-        if event.row_key is not None and event.row_key.value is not None:
-            row_index = event.row_key.value
-            if 0 <= row_index < len(self._tasks):
-                self._selected_task = self._tasks[row_index]
-                detail = self.query_one(TaskDetail)
-                detail.update_task(self._selected_task)
+        """Handle row selection in the tasks table (e.g. Enter key)."""
+        self._update_selected_task_from_row_key(event.row_key)
 
     @on(Button.Pressed, "#refresh-btn")
     async def on_refresh_pressed(self) -> None:
