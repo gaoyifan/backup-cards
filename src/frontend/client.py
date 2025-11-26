@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from gql import Client, gql
@@ -14,6 +15,7 @@ class GraphQLClient:
         logger.debug("GraphQLClient initialized: http=%s, ws=%s", self.http_url, self.url)
         self.transport = WebsocketsTransport(url=self.url)
         self.client = Client(transport=self.transport, fetch_schema_from_transport=True)
+        self._http_lock = asyncio.Lock()
         
         # Separate client for queries/mutations if needed, or use same if transport supports it.
         # gql WebsocketsTransport is mainly for subscriptions.
@@ -25,10 +27,11 @@ class GraphQLClient:
         logger.debug("Executing GraphQL query: %s", query_str[:100].replace('\n', ' '))
         query = gql(query_str)
         try:
-            async with self.http_client as session:
-                result = await session.execute(query, variable_values=variable_values)
-                logger.debug("GraphQL query successful")
-                return result
+            async with self._http_lock:
+                async with self.http_client as session:
+                    result = await session.execute(query, variable_values=variable_values)
+                    logger.debug("GraphQL query successful")
+                    return result
         except Exception as e:
             logger.error("GraphQL query failed: %s", e)
             raise
