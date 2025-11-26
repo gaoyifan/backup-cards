@@ -380,8 +380,7 @@ class TasksScreen(PageScreen):
     @on(Button.Pressed, "#refresh-btn")
     async def on_refresh_pressed(self) -> None:
         """Handle refresh button press."""
-        await self._refresh_data()
-        self.notify("Task list refreshed", severity="information")
+        await self._run_manual_refresh()
 
     @on(Button.Pressed, "#cancel-btn")
     async def on_cancel_pressed(self) -> None:
@@ -414,4 +413,8 @@ class TasksScreen(PageScreen):
 
     def action_refresh(self) -> None:
         """Action to refresh task list."""
-        asyncio.create_task(self._refresh_data())
+        asyncio.create_task(self._run_manual_refresh())
+
+    async def _run_manual_refresh(self) -> None:
+        await self._refresh_data()
+        self.notify("Task list refreshed", severity="information")
