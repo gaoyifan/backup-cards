@@ -149,63 +149,6 @@ class ActiveBackupPanel(containers.VerticalGroup):
         self.query_one("#progress-text", Label).update(value)
 
 
-class ConfigStatus(containers.VerticalGroup):
-    """Shows current configuration status."""
-
-    DEFAULT_CSS = """
-    ConfigStatus {
-        height: auto;
-        padding: 1 2;
-        background: $boost;
-        margin: 1 0;
-        
-        #config-title {
-            text-style: bold;
-            margin-bottom: 1;
-        }
-        
-        .config-row {
-            height: auto;
-        }
-        
-        .config-label {
-            width: 18;
-            color: $text-muted;
-        }
-        
-        .config-value {
-            width: 1fr;
-        }
-    }
-    """
-
-    auto_enabled: reactive[bool] = reactive(False)
-    target_path: reactive[str] = reactive("")
-
-    def compose(self) -> ComposeResult:
-        yield Label("⚙️  Configuration", id="config-title")
-        with containers.HorizontalGroup(classes="config-row"):
-            yield Label("Auto Backup:", classes="config-label")
-            yield Label("", id="auto-status", classes="config-value")
-        with containers.HorizontalGroup(classes="config-row"):
-            yield Label("Target Path:", classes="config-label")
-            yield Label("", id="target-status", classes="config-value")
-
-    def watch_auto_enabled(self, value: bool) -> None:
-        label = self.query_one("#auto-status", Label)
-        if value:
-            label.update("[green]● Enabled[/green]")
-        else:
-            label.update("[dim]○ Disabled[/dim]")
-
-    def watch_target_path(self, value: str) -> None:
-        label = self.query_one("#target-status", Label)
-        if value:
-            label.update(f"[cyan]{value}[/cyan]")
-        else:
-            label.update("[dim italic](not configured)[/dim italic]")
-
-
 class DeviceCard(containers.HorizontalGroup):
     """Individual device card."""
 
@@ -345,7 +288,6 @@ class HomeScreen(PageScreen):
             yield QuickStats()
             yield Rule()
             yield ActiveBackupPanel()
-            yield ConfigStatus()
             yield DeviceList()
         yield Footer()
 
@@ -376,7 +318,6 @@ class HomeScreen(PageScreen):
         query Dashboard {
             config {
                 autoBackupEnabled
-                autoBackupTargetPath
             }
             backupTasks(limit: 5) {
                 backupId
@@ -407,11 +348,6 @@ class HomeScreen(PageScreen):
         stats.devices_count = len(devices)
         stats.auto_backup = config.get("autoBackupEnabled", False)
         stats.active_tasks = sum(1 for t in tasks if t.get("status") in {"PENDING", "IN_PROGRESS"})
-
-        # Update config status
-        config_panel = self.query_one(ConfigStatus)
-        config_panel.auto_enabled = config.get("autoBackupEnabled", False)
-        config_panel.target_path = config.get("autoBackupTargetPath", "")
 
         # Update devices
         device_list = self.query_one(DeviceList)
