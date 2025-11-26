@@ -90,6 +90,12 @@ class SDBackupApp(App):
             tooltip="Configuration",
         ),
         Binding(
+            "a",
+            "toggle_auto_refresh",
+            "Auto-Refresh",
+            tooltip="Toggle auto-refresh",
+        ),
+        Binding(
             "ctrl+q",
             "quit",
             "Quit",
@@ -103,7 +109,15 @@ class SDBackupApp(App):
         self.port = port or 8000
         logger.info("Initializing SDBackupApp with GraphQL endpoint at %s:%s", self.host, self.port)
         self.client = GraphQLClient(host=self.host, port=self.port)
+        self.auto_refresh_enabled: bool = True
         self.theme = "gruvbox"
+
+    def action_toggle_auto_refresh(self) -> None:
+        """Toggle auto-refresh on/off globally."""
+        self.auto_refresh_enabled = not self.auto_refresh_enabled
+        status = "enabled" if self.auto_refresh_enabled else "disabled"
+        logger.debug("Global auto-refresh toggled: %s", status)
+        self.notify(f"Auto-refresh {status}", title="Auto-Refresh")
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Disable switching to a mode we are already on."""

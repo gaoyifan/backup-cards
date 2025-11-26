@@ -210,13 +210,11 @@ class TasksScreen(PageScreen):
 
     BINDINGS = [
         Binding("r", "refresh", "Refresh", tooltip="Refresh task list"),
-        Binding("a", "toggle_auto_refresh", "Auto-Refresh", tooltip="Toggle auto-refresh"),
     ]
 
     def __init__(self) -> None:
         super().__init__()
         self._refresh_task: Optional[asyncio.Task] = None
-        self._auto_refresh_enabled: bool = True
         self._tasks: list[dict] = []
         self._selected_task: Optional[dict] = None
 
@@ -251,16 +249,9 @@ class TasksScreen(PageScreen):
         """Periodically refresh task list."""
         logger.debug("TasksScreen refresh loop started")
         while True:
-            if self._auto_refresh_enabled:
+            if self.app.auto_refresh_enabled:
                 await self._refresh_data()
             await asyncio.sleep(3)
-
-    def action_toggle_auto_refresh(self) -> None:
-        """Toggle auto-refresh on/off."""
-        self._auto_refresh_enabled = not self._auto_refresh_enabled
-        status = "enabled" if self._auto_refresh_enabled else "disabled"
-        logger.debug("Auto-refresh toggled: %s", status)
-        self.notify(f"Auto-refresh {status}", title="Auto-Refresh")
 
     async def _refresh_data(self) -> None:
         """Fetch and update task list."""

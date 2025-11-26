@@ -9,7 +9,6 @@ from typing import Optional
 
 from textual import containers, on
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.reactive import reactive
 from textual.widgets import Footer, Label, Markdown, ProgressBar, Rule, Static
 
@@ -334,14 +333,9 @@ class HomeScreen(PageScreen):
     }
     """
 
-    BINDINGS = [
-        Binding("a", "toggle_auto_refresh", "Auto-Refresh", tooltip="Toggle auto-refresh"),
-    ]
-
     def __init__(self) -> None:
         super().__init__()
         self._refresh_task: Optional[asyncio.Task] = None
-        self._auto_refresh_enabled: bool = True
         self._progress_task: Optional[asyncio.Task] = None
         self._active_backup_id: Optional[str] = None
 
@@ -370,16 +364,9 @@ class HomeScreen(PageScreen):
         """Periodically refresh dashboard data."""
         logger.debug("HomeScreen refresh loop started")
         while True:
-            if self._auto_refresh_enabled:
+            if self.app.auto_refresh_enabled:
                 await self._refresh_data()
             await asyncio.sleep(2)
-
-    def action_toggle_auto_refresh(self) -> None:
-        """Toggle auto-refresh on/off."""
-        self._auto_refresh_enabled = not self._auto_refresh_enabled
-        status = "enabled" if self._auto_refresh_enabled else "disabled"
-        logger.debug("Auto-refresh toggled: %s", status)
-        self.notify(f"Auto-refresh {status}", title="Auto-Refresh")
 
     async def _refresh_data(self) -> None:
         """Fetch and update dashboard data."""
