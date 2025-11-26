@@ -56,7 +56,7 @@ class ProgressBus:
 
 @dataclass
 class RunningBackup:
-    task: asyncio.Task
+    task: Optional[asyncio.Task] = None
     process: Optional[asyncio.subprocess.Process] = None
     output_consumer: Optional[asyncio.Task] = None
     cleanup: Optional[Callable[[BackupStatus], Awaitable[None]]] = None
@@ -252,6 +252,8 @@ class BackupManager:
         )
 
         logger.debug("Enqueuing backup %s", backup_id)
+        running = RunningBackup(cleanup=cleanup)
+        self._active[backup_id] = running
         job = asyncio.create_task(
             self._run_backup(
                 backup_id=backup_id,
@@ -260,29 +262,34 @@ class BackupManager:
                 size_total=size_total,
             )
         )
-        running = RunningBackup(task=job, cleanup=cleanup)
-        self._active[backup_id] = running
-        self._track_background_task(job)
+        running.task = job
+        self._track_background_task(backup_id, job)
         return backup_id
 
-    def _track_background_task(self, task: asyncio.Task) -> None:
+    def _track_background_task(self, backup_id: str, task: asyncio.Task) -> None:
         self._background_tasks.add(task)
 
         def _done_callback(done_task: asyncio.Task) -> None:
+            exc = done_task.exception()
+            if exc is not None:
+                logger.exception("Background task for backup %s failed", backup_id, exc_info=exc)
             self._background_tasks.discard(done_task)
 
         task.add_done_callback(_done_callback)
 
     async def _run_backup(self, *, backup_id: str, source: Path, target: Path, size_total: int) -> None:
+        logger.debug("Background coroutine started for backup %s", backup_id)
         running = self._active[backup_id]
         cleanup_cb = running.cleanup
         final_status: Optional[BackupStatus] = None
         started_at = datetime.datetime.utcnow()
+        logger.debug("Backup %s transitioning to IN_PROGRESS", backup_id)
         await self._update_task(
             backup_id,
             status=BackupStatus.IN_PROGRESS,
             started_at=started_at,
         )
+        logger.debug("Backup %s marked IN_PROGRESS", backup_id)
 
         await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
 
