@@ -127,6 +127,7 @@ class ActiveBackupPanel(containers.VerticalGroup):
     """
 
     backup_id: reactive[Optional[str]] = reactive(None)
+    transfer_text: reactive[str] = reactive("")
     progress: reactive[float] = reactive(0.0)
     progress_text: reactive[str] = reactive("")
 
@@ -138,8 +139,9 @@ class ActiveBackupPanel(containers.VerticalGroup):
 
     def watch_backup_id(self, value: Optional[str]) -> None:
         self.set_class(value is None, "hidden")
-        if value:
-            self.query_one("#backup-info", Label).update(f"Backup ID: [cyan]{value[:12]}...[/cyan]")
+
+    def watch_transfer_text(self, value: str) -> None:
+        self.query_one("#backup-info", Label).update(value)
 
     def watch_progress(self, value: float) -> None:
         bar = self.query_one("#progress-bar", ProgressBar)
@@ -324,6 +326,8 @@ class HomeScreen(PageScreen):
                 status
                 sizeCompleted
                 sizeTotal
+                source
+                target
             }
             availableDevices {
                 devicePath
@@ -362,6 +366,11 @@ class HomeScreen(PageScreen):
         # Update active backup panel
         backup_panel = self.query_one(ActiveBackupPanel)
         backup_panel.backup_id = active_id
+        backup_panel.transfer_text = (
+            f"{self._shorten_path(active.get('source'))} -> {self._shorten_path(active.get('target'))}"
+            if active
+            else ""
+        )
 
         if active_id != self._active_backup_id:
             self._active_backup_id = active_id
@@ -381,6 +390,12 @@ class HomeScreen(PageScreen):
                 return f"{size:.1f} {unit}"
             size /= 1024
         return f"{size:.1f} TB"
+
+    def _shorten_path(self, path: Optional[str], max_len: int = 32) -> str:
+        """Return a readable path string clipped from the end if needed."""
+        if not path:
+            return "Unknown"
+        return path if len(path) <= max_len else f"...{path[-(max_len - 3):]}"
 
     async def _restart_progress_subscription(self, backup_id: Optional[str]) -> None:
         """Start or stop progress subscription."""
