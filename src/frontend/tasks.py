@@ -292,6 +292,8 @@ class TasksScreen(PageScreen):
     def _update_table(self) -> None:
         """Update the data table with current tasks."""
         table = self.query_one("#tasks-table", DataTable)
+        selected_id = self._selected_task.get("backupId") if self._selected_task else None
+        previous_index = table.cursor_row if table.row_count else None
         table.clear()
 
         for task in self._tasks:
@@ -322,6 +324,30 @@ class TasksScreen(PageScreen):
                 progress = "[dim]—[/dim]"
 
             table.add_row(status_display, task_type, source, target, progress)
+
+        if not self._tasks:
+            self._set_selected_task(None)
+            return
+
+        if not selected_id and previous_index is None:
+            return
+
+        target_index = None
+        if selected_id:
+            target_index = next(
+                (idx for idx, task in enumerate(self._tasks) if task.get("backupId") == selected_id),
+                None,
+            )
+
+        if target_index is None and previous_index is not None:
+            target_index = min(previous_index, len(self._tasks) - 1)
+
+        if target_index is None:
+            self._set_selected_task(None)
+            return
+
+        table.move_cursor(row=target_index)
+        self._set_selected_task(self._tasks[target_index])
 
     def _set_selected_task(self, task: Optional[dict]) -> None:
         self._selected_task = task
