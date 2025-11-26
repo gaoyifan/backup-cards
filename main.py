@@ -111,9 +111,13 @@ async def main(
             await ui_app.run_async()
         finally:
             server.should_exit = True
-            backend_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await backend_task
+            try:
+                await asyncio.wait_for(backend_task, timeout=5)
+            except asyncio.TimeoutError:
+                logger.warning("Timed out waiting for backend shutdown; cancelling task")
+                backend_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await backend_task
 
 
 if __name__ == "__main__":
