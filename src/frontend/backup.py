@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from textual import containers, on
 from textual.app import ComposeResult
@@ -11,6 +12,8 @@ from textual.validation import Length
 from textual.widgets import Button, Footer, Input, Label, Markdown, Select, Rule
 
 from frontend.page import PageScreen
+
+logger = logging.getLogger(__name__)
 
 
 BACKUP_MD = """\
@@ -224,6 +227,7 @@ class BackupScreen(PageScreen):
         yield Footer()
 
     def on_mount(self) -> None:
+        logger.debug("BackupScreen mounted, loading devices")
         asyncio.create_task(self._load_devices())
 
     async def _load_devices(self) -> None:
@@ -239,12 +243,14 @@ class BackupScreen(PageScreen):
         }
         """
         try:
+            logger.debug("Loading available devices")
             result = await client.execute(query)
             self._devices = result.get("availableDevices", [])
+            logger.debug("Loaded %d devices", len(self._devices))
             selector = self.query_one(DeviceSelector)
             selector.update_devices(self._devices)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to load devices: %s", e)
 
     def _show_status(self, message: str, status_type: str = "info") -> None:
         """Show status message."""
@@ -293,6 +299,7 @@ class BackupScreen(PageScreen):
             return
 
         self._show_status("⏳ Starting backup...", "info")
+        logger.info("Starting manual backup: %s -> %s", source, target)
 
         client = self.app.client
         mutation = """
@@ -306,6 +313,7 @@ class BackupScreen(PageScreen):
             )
             backup_id = result.get("startManualBackup")
             if backup_id:
+                logger.info("Backup started successfully with ID: %s", backup_id)
                 self._show_status(
                     f"✓ Backup started successfully!\n  ID: {backup_id[:16]}...",
                     "success"
@@ -316,8 +324,10 @@ class BackupScreen(PageScreen):
                     severity="information",
                 )
             else:
+                logger.warning("Backup mutation returned no ID")
                 self._show_status("⚠️  Backup queued", "info")
         except Exception as e:
+            logger.error("Failed to start backup: %s", e)
             self._show_status(f"✗ Failed to start backup:\n  {e}", "error")
             self.notify(f"Failed: {e}", title="Error", severity="error")
 

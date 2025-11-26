@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 from textual import containers, on
@@ -11,6 +12,8 @@ from textual.binding import Binding
 from textual.widgets import Button, DataTable, Footer, Label, Markdown, ProgressBar, Rule
 
 from frontend.page import PageScreen
+
+logger = logging.getLogger(__name__)
 
 
 TASKS_MD = """\
@@ -234,16 +237,19 @@ class TasksScreen(PageScreen):
         yield Footer()
 
     def on_mount(self) -> None:
+        logger.debug("TasksScreen mounted, starting refresh loop")
         table = self.query_one("#tasks-table", DataTable)
         table.add_columns("Status", "Type", "Source", "Target", "Progress")
         self._refresh_task = asyncio.create_task(self._refresh_loop())
 
     def on_unmount(self) -> None:
+        logger.debug("TasksScreen unmounting, cancelling refresh task")
         if self._refresh_task:
             self._refresh_task.cancel()
 
     async def _refresh_loop(self) -> None:
         """Periodically refresh task list."""
+        logger.debug("TasksScreen refresh loop started")
         while True:
             if self._auto_refresh_enabled:
                 await self._refresh_data()
@@ -253,6 +259,7 @@ class TasksScreen(PageScreen):
         """Toggle auto-refresh on/off."""
         self._auto_refresh_enabled = not self._auto_refresh_enabled
         status = "enabled" if self._auto_refresh_enabled else "disabled"
+        logger.debug("Auto-refresh toggled: %s", status)
         self.notify(f"Auto-refresh {status}", title="Auto-Refresh")
 
     async def _refresh_data(self) -> None:
@@ -273,8 +280,11 @@ class TasksScreen(PageScreen):
         }
         """
         try:
+            logger.debug("Executing tasks query")
             result = await client.execute(query, variable_values={"limit": 50})
-        except Exception:
+            logger.debug("Tasks query returned %d tasks", len(result.get("backupTasks", [])))
+        except Exception as e:
+            logger.warning("Failed to fetch tasks: %s", e)
             return
 
         self._tasks = result.get("backupTasks", [])

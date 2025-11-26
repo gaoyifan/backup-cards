@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from typing import Optional
 
@@ -13,6 +14,8 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Label, Markdown, ProgressBar, Rule, Static
 
 from frontend.page import PageScreen
+
+logger = logging.getLogger(__name__)
 
 
 WELCOME_MD = """\
@@ -63,7 +66,7 @@ class QuickStats(containers.HorizontalGroup):
             yield Label("0", id="devices-value", classes="stat-value")
             yield Label("Devices Connected", classes="stat-label")
         with containers.VerticalGroup(classes="stat-box"):
-            yield Label("OFF", id="auto-value", classes="stat-value")
+            yield Label("", id="auto-value", classes="stat-value")
             yield Label("Auto Backup", classes="stat-label")
         with containers.VerticalGroup(classes="stat-box"):
             yield Label("0", id="tasks-value", classes="stat-value")
@@ -353,9 +356,11 @@ class HomeScreen(PageScreen):
         yield Footer()
 
     def on_mount(self) -> None:
+        logger.debug("HomeScreen mounted, starting refresh loop")
         self._refresh_task = asyncio.create_task(self._refresh_loop())
 
     def on_unmount(self) -> None:
+        logger.debug("HomeScreen unmounting, cancelling tasks")
         if self._refresh_task:
             self._refresh_task.cancel()
         if self._progress_task:
@@ -363,6 +368,7 @@ class HomeScreen(PageScreen):
 
     async def _refresh_loop(self) -> None:
         """Periodically refresh dashboard data."""
+        logger.debug("HomeScreen refresh loop started")
         while True:
             if self._auto_refresh_enabled:
                 await self._refresh_data()
@@ -372,6 +378,7 @@ class HomeScreen(PageScreen):
         """Toggle auto-refresh on/off."""
         self._auto_refresh_enabled = not self._auto_refresh_enabled
         status = "enabled" if self._auto_refresh_enabled else "disabled"
+        logger.debug("Auto-refresh toggled: %s", status)
         self.notify(f"Auto-refresh {status}", title="Auto-Refresh")
 
     async def _refresh_data(self) -> None:
@@ -397,8 +404,11 @@ class HomeScreen(PageScreen):
         }
         """
         try:
+            logger.debug("Executing dashboard query")
             result = await client.execute(query)
-        except Exception:
+            logger.debug("Dashboard query result: %s", result)
+        except Exception as e:
+            logger.warning("Failed to fetch dashboard data: %s", e)
             return
 
         # Update quick stats
@@ -464,6 +474,7 @@ class HomeScreen(PageScreen):
 
     async def _consume_progress(self, backup_id: str) -> None:
         """Subscribe to progress updates for active backup."""
+        logger.debug("Starting progress subscription for backup %s", backup_id)
         client = self.app.client
         query = """
         subscription($id: ID!) {
@@ -482,5 +493,7 @@ class HomeScreen(PageScreen):
                 percent = (completed / total) * 100 if total > 0 else 0
                 backup_panel.progress = percent
                 backup_panel.progress_text = f"{self._format_bytes(completed)} / {self._format_bytes(total)} ({percent:.1f}%)"
-        except Exception:
-            pass
+        except asyncio.CancelledError:
+            logger.debug("Progress subscription cancelled for backup %s", backup_id)
+        except Exception as e:
+            logger.warning("Progress subscription error for backup %s: %s", backup_id, e)

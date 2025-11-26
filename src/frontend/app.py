@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from textual.app import App
 from textual.binding import Binding
 
@@ -10,6 +12,8 @@ from frontend.client import GraphQLClient
 from frontend.home import HomeScreen
 from frontend.settings import SettingsScreen
 from frontend.tasks import TasksScreen
+
+logger = logging.getLogger(__name__)
 
 
 class SDBackupApp(App):
@@ -97,12 +101,9 @@ class SDBackupApp(App):
         super().__init__(**kwargs)
         self.host = host or "127.0.0.1"
         self.port = port or 8000
-        self.client: GraphQLClient
-        self.theme = "gruvbox"
-
-    def on_mount(self) -> None:
-        """Initialize the GraphQL client when the app mounts."""
+        logger.info("Initializing SDBackupApp with GraphQL endpoint at %s:%s", self.host, self.port)
         self.client = GraphQLClient(host=self.host, port=self.port)
+        self.theme = "gruvbox"
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Disable switching to a mode we are already on."""

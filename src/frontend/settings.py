@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from textual import containers, on
 from textual.app import ComposeResult
 from textual.widgets import Button, Checkbox, Footer, Input, Label, Markdown, Rule, Switch
 
 from frontend.page import PageScreen
+
+logger = logging.getLogger(__name__)
 
 
 SETTINGS_MD = """\
@@ -230,6 +233,7 @@ class SettingsScreen(PageScreen):
         yield Footer()
 
     def on_mount(self) -> None:
+        logger.debug("SettingsScreen mounted, loading config")
         asyncio.create_task(self._load_config())
 
     async def _load_config(self) -> None:
@@ -245,8 +249,10 @@ class SettingsScreen(PageScreen):
         }
         """
         try:
+            logger.debug("Loading configuration")
             result = await client.execute(query)
             config = result.get("config", {})
+            logger.debug("Loaded config: %s", config)
             self._original_config = config
 
             switch = self.query_one("#auto-backup-switch", Switch)
@@ -264,6 +270,7 @@ class SettingsScreen(PageScreen):
             # Auto-hide after 2 seconds
             asyncio.create_task(self._auto_hide_status())
         except Exception as e:
+            logger.error("Failed to load config: %s", e)
             self._show_status(f"✗ Failed to load config: {e}", "error")
 
     async def _auto_hide_status(self) -> None:
@@ -301,6 +308,8 @@ class SettingsScreen(PageScreen):
         target_template = input_field.value.strip()
 
         self._show_status("⏳ Saving...", "info")
+        logger.info("Saving config: autoBackupEnabled=%s, autoBackupTargetPath=%s", 
+                    auto_enabled, target_template)
 
         client = self.app.client
         mutation = """
@@ -317,6 +326,7 @@ class SettingsScreen(PageScreen):
                 mutation, variable_values={"config": config_input}
             )
             if result.get("updateConfig"):
+                logger.info("Config saved successfully")
                 self._original_config = {
                     "autoBackupEnabled": auto_enabled,
                     "autoBackupTargetPath": target_template,
@@ -324,8 +334,10 @@ class SettingsScreen(PageScreen):
                 self._show_status("✓ Settings saved successfully!", "success")
                 self.notify("Settings saved", title="Success", severity="information")
             else:
+                logger.warning("Config mutation returned False")
                 self._show_status("⚠️ Settings may not have been saved", "info")
         except Exception as e:
+            logger.error("Failed to save config: %s", e)
             self._show_status(f"✗ Failed to save: {e}", "error")
             self.notify(f"Failed: {e}", title="Error", severity="error")
 
