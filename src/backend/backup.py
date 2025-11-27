@@ -18,6 +18,7 @@ from sqlalchemy import select
 from backend.config import get_config
 from backend.db import BackupTaskRecord, session_scope
 from backend.models import BackupStatus, BackupTaskDTO, BackupType
+from backend.rsync_parser import RsyncOutputParser
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,8 @@ class RunningBackup:
     output_consumer: Optional[asyncio.Task] = None
     cleanup: Optional[Callable[[BackupStatus], Awaitable[None]]] = None
     cancel_requested: bool = False
+    parser: Optional[RsyncOutputParser] = None
+    size_total: int = 0
 
 
 class BackupManager:
@@ -239,7 +242,7 @@ class BackupManager:
         backup_type: BackupType,
         cleanup: Optional[Callable[[BackupStatus], Awaitable[None]]] = None,
     ) -> str:
-        size_total = 0
+        size_total = await asyncio.to_thread(self._calculate_size_total, source)
         backup_id = uuid.uuid4().hex
         logger.debug("Creating task record for backup %s", backup_id)
         await self._create_task_record(
@@ -252,7 +255,7 @@ class BackupManager:
         )
 
         logger.debug("Enqueuing backup %s", backup_id)
-        running = RunningBackup(cleanup=cleanup)
+        running = RunningBackup(cleanup=cleanup, parser=RsyncOutputParser(), size_total=size_total)
         self._active[backup_id] = running
         job = asyncio.create_task(
             self._run_backup(
@@ -280,6 +283,8 @@ class BackupManager:
     async def _run_backup(self, *, backup_id: str, source: Path, target: Path, size_total: int) -> None:
         logger.debug("Background coroutine started for backup %s", backup_id)
         running = self._active[backup_id]
+        if size_total and size_total > 0:
+            running.size_total = size_total
         cleanup_cb = running.cleanup
         final_status: Optional[BackupStatus] = None
         started_at = datetime.datetime.utcnow()
@@ -309,19 +314,24 @@ class BackupManager:
                 logger.warning("rsync not found. Falling back to Python copy for %s", backup_id)
                 await asyncio.to_thread(self._python_copy, source, target)
                 process = None
+                await self._update_progress(
+                    backup_id,
+                    size_completed=running.size_total or size_total,
+                    size_total_hint=running.size_total or size_total,
+                )
+                returncode = 0
 
             running.process = process
             if process:
                 consumer = asyncio.create_task(
-                    self._consume_rsync_output(backup_id, process.stdout)
+                    self._consume_rsync_output(backup_id, process.stdout, running)
                 )
                 running.output_consumer = consumer
                 returncode = await process.wait()
                 await consumer
                 consumer = None
                 running.output_consumer = None
-            else:
-                await self._emit_progress_placeholder(backup_id)
+            elif returncode is None:
                 returncode = 0
         except asyncio.CancelledError:
             running.cancel_requested = True
@@ -352,7 +362,7 @@ class BackupManager:
         cmd = [
             "rsync",
             "-a",
-            "--delete",
+            "--stats",
             "--info=progress2",
             source_arg,
             target_arg,
@@ -369,23 +379,57 @@ class BackupManager:
         self,
         backup_id: str,
         stream: Optional[asyncio.StreamReader],
+        running: RunningBackup,
     ) -> None:
         if not stream:
             return
+        buffer = ""
         while True:
-            line = await stream.readline()
-            if not line:
+            chunk = await stream.read(4096)
+            if not chunk:
                 break
-            text = line.decode(errors="ignore").strip()
-            if not text:
-                continue
-            await self._handle_rsync_output(backup_id, text)
+            buffer += chunk.decode(errors="ignore").replace("\r", "\n")
+            while True:
+                newline = buffer.find("\n")
+                if newline == -1:
+                    break
+                line, buffer = buffer[:newline], buffer[newline + 1 :]
+                if line.strip():
+                    await self._handle_rsync_output(backup_id, line.strip(), running)
+        if buffer.strip():
+            await self._handle_rsync_output(backup_id, buffer.strip(), running)
 
-    async def _handle_rsync_output(self, backup_id: str, line: str) -> None:
-        """Placeholder for parsing `rsync --info=progress2` lines."""
-        # TODO: Parse real progress metrics from rsync --info=progress2 output.
+    async def _handle_rsync_output(self, backup_id: str, line: str, running: RunningBackup) -> None:
+        """Parse `rsync --info=progress2 --stats` output and emit progress updates."""
         logger.debug("rsync[%s]: %s", backup_id[:8], line)
-        await self._emit_progress_placeholder(backup_id)
+        parser = running.parser
+        if parser is None:
+            return
+
+        progress, summary_updated = parser.parse_line(line)
+        size_total_hint = parser.total_bytes or (running.size_total if running.size_total else None)
+
+        if progress:
+            if progress.total_bytes:
+                size_total_hint = progress.total_bytes
+            if size_total_hint:
+                running.size_total = size_total_hint
+            await self._update_progress(
+                backup_id,
+                size_completed=progress.transferred_bytes,
+                size_total_hint=size_total_hint,
+            )
+            return
+
+        if summary_updated:
+            if size_total_hint:
+                running.size_total = size_total_hint
+            completed = parser.transferred_total
+            await self._update_progress(
+                backup_id,
+                size_completed=completed,
+                size_total_hint=size_total_hint,
+            )
 
     def _python_copy(self, source: Path, target: Path) -> None:
         if source.is_file():
@@ -434,6 +478,8 @@ class BackupManager:
             record.status = status.value
             record.started_at = record.started_at or started_at
             record.finished_at = finished_at
+            if status == BackupStatus.COMPLETED and record.size_total and record.size_completed < record.size_total:
+                record.size_completed = record.size_total
             session.add(record)
             size_total = record.size_total
             size_completed = record.size_completed
@@ -464,8 +510,44 @@ class BackupManager:
             )
             session.add(record)
 
-    async def _emit_progress_placeholder(self, backup_id: str) -> None:
-        await self._progress.publish(backup_id, 0, 0)
+    async def _update_progress(
+        self,
+        backup_id: str,
+        *,
+        size_completed: Optional[int],
+        size_total_hint: Optional[int] = None,
+        force_publish: bool = False,
+    ) -> None:
+        async with session_scope() as session:
+            stmt = select(BackupTaskRecord).where(BackupTaskRecord.backup_id == backup_id)
+            result = await session.execute(stmt)
+            record = result.scalars().one_or_none()
+            if record is None:
+                return
+
+            updated = False
+            size_total_value = record.size_total
+            size_completed_value = record.size_completed
+
+            if (
+                size_total_hint is not None
+                and size_total_hint > 0
+                and size_total_hint != record.size_total
+            ):
+                record.size_total = size_total_hint
+                size_total_value = size_total_hint
+                updated = True
+
+            if size_completed is not None and size_completed != record.size_completed:
+                record.size_completed = size_completed
+                size_completed_value = size_completed
+                updated = True
+
+            if updated:
+                session.add(record)
+
+        if updated or force_publish:
+            await self._progress.publish(backup_id, size_completed_value, size_total_value)
 
     async def _complete_cleanup(
         self,
@@ -486,6 +568,23 @@ class BackupManager:
             await cleanup_cb(final_status)
         except Exception as exc:
             logger.warning("Cleanup hook for %s failed: %s", final_status.value, exc)
+
+    def _calculate_size_total(self, path: Path) -> int:
+        if path.is_file():
+            try:
+                return path.stat().st_size
+            except OSError:
+                return 0
+
+        total_size = 0
+        for root, _, files in os.walk(path):
+            for file_name in files:
+                file_path = Path(root) / file_name
+                try:
+                    total_size += file_path.stat().st_size
+                except OSError:
+                    continue
+        return total_size
 
     def _record_to_dto(self, record: BackupTaskRecord) -> BackupTaskDTO:
         return BackupTaskDTO(
