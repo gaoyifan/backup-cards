@@ -263,6 +263,10 @@ class HomeScreen(PageScreen):
         self._tasks_sub = asyncio.create_task(self._subscribe_tasks())
         self._devices_sub = asyncio.create_task(self._subscribe_devices())
 
+    def on_screen_resume(self) -> None:
+        """Reload config when screen becomes active again (e.g., after settings change)."""
+        asyncio.create_task(self._load_config())
+
     def on_unmount(self) -> None:
         for task in (self._tasks_sub, self._devices_sub):
             if task:
