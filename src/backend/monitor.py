@@ -4,7 +4,7 @@ from typing import Awaitable, Callable, Optional
 
 import pyudev
 
-from backend.devices import publish_device_update
+from backend.devices import is_storage_device, publish_device_update
 
 logger = logging.getLogger(__name__)
 
@@ -18,22 +18,6 @@ class DeviceMonitor:
         self.running = False
         self.loop: Optional[asyncio.AbstractEventLoop] = None
 
-    def match_device(self, d: pyudev.Device) -> bool:
-        try:
-            return all(
-                [
-                    d.subsystem == "block",
-                    getattr(d, "action", "") == "add",
-                    d.device_type == "partition",
-                    d.get("ID_BUS") == "usb",
-                    d.sys_number == "1",
-                    d.get("ID_FS_TYPE", "").lower() in {"exfat", "fat32", "udf"},
-                ]
-            )
-        except Exception as e:
-            logger.error(f"[Error matching device]: {e}")
-            return False
-
     def _handle_event(self):
         if not self.running:
             return
@@ -46,7 +30,7 @@ class DeviceMonitor:
             # Publish device update for any block device event (add/remove)
             asyncio.create_task(publish_device_update())
 
-            if not self.match_device(device):
+            if not is_storage_device(device, action="add"):
                 continue
             logger.info(f"[MATCH] device_node = {device.device_node}")
             task = asyncio.create_task(self.callback(device))

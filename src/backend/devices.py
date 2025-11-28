@@ -2,13 +2,34 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import AsyncIterator, Dict, List
+from typing import AsyncIterator, Dict, List, Optional
 
 import pyudev
 
 from backend.models import DeviceInfo
 
 logger = logging.getLogger(__name__)
+
+
+def is_storage_device(device: pyudev.Device, action: Optional[str] = None) -> bool:
+    """Check if device matches storage device criteria for auto-backup.
+
+    Args:
+        device: pyudev Device to check
+        action: Expected device action (e.g., 'add' for new devices, None for existing).
+    """
+    try:
+        return all([
+            device.subsystem == "block",
+            getattr(device, "action") == action,
+            device.device_type == "partition",
+            device.get("ID_BUS") in {"usb", "mmc"},
+            device.sys_number == "1",
+            device.get("ID_FS_TYPE", "").lower() in {"exfat", "vfat", "udf"},
+        ])
+    except Exception as e:
+        logger.error(f"Error matching device: {e}")
+        return False
 
 
 class DeviceEventBus:
