@@ -30,15 +30,18 @@ Automatically start backups when SD cards are inserted.
 TEMPLATE_HELP_MD = """\
 ### Path Template Variables
 
-Use these placeholders in your target path:
+Use these placeholders in your target path. Date/time values are based on the \
+earliest file modification time found on the SD card (or current time if empty).
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `{device}` | Device name | sda1 |
-| `{date}` | Current date | 2024-01-15 |
-| `{time}` | Current time | 14-30-00 |
+| `{date}` | Date (YYYYMMDD) | 20240115 |
+| `{hour}` | Hour (HH) | 14 |
+| `{minute}` | Minute (MM) | 30 |
+| `{uuid}` | Full partition UUID | 1234-ABCD |
+| `{uuid_short}` | First 4 chars of UUID | 1234 |
 
-**Example:** `/backups/{device}/{date}` → `/backups/sda1/2024-01-15`
+**Example:** `~/sd-backups/{date}-{uuid_short}` → `~/sd-backups/20240115-1234`
 """
 
 
@@ -134,7 +137,7 @@ class TargetTemplateForm(containers.VerticalGroup):
         yield Label("📁 Target Path Template", id="template-title")
         yield Label("Where backups will be saved", id="template-label")
         yield Input(
-            placeholder="/backups/{device}/{date}",
+            placeholder="~/sd-backups/{date}-{uuid_short}",
             id="target-template-input",
         )
         with containers.VerticalGroup(id="preview-section"):
@@ -148,10 +151,12 @@ class TargetTemplateForm(containers.VerticalGroup):
             self.query_one("#preview-value", Label).update("[dim]Enter a template above[/dim]")
             return
         
-        # Replace template variables with example values
-        preview = template.replace("{device}", "sda1")
-        preview = preview.replace("{date}", "2024-01-15")
-        preview = preview.replace("{time}", "14-30-00")
+        # Replace template variables with example values matching backend format
+        preview = template.replace("{date}", "20240115")
+        preview = preview.replace("{hour}", "14")
+        preview = preview.replace("{minute}", "30")
+        preview = preview.replace("{uuid}", "1234-ABCD")
+        preview = preview.replace("{uuid_short}", "1234")
         self.query_one("#preview-value", Label).update(f"[cyan]{preview}[/cyan]")
 
 
