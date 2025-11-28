@@ -12,7 +12,7 @@ from textual.binding import Binding
 from textual.widgets import Button, DataTable, Footer, Label, Markdown, ProgressBar, Rule
 
 from frontend.page import PageScreen
-from frontend.utils import ProgressSubscriptionManager, calc_percent, fmt_progress, shorten_path
+from frontend.utils import ProgressSubscriptionManager, calc_percent, fmt_progress
 
 logger = logging.getLogger(__name__)
 
@@ -218,8 +218,8 @@ class TasksScreen(PageScreen):
             table.add_row(
                 STATUS_STYLES.get(status, status),
                 f"[cyan]{task.get('type', '')}[/cyan]",
-                shorten_path(task.get("source", "")),
-                shorten_path(task.get("target", "")),
+                task.get("source", ""),
+                task.get("target", ""),
                 progress
             )
 
