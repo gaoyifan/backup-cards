@@ -9,16 +9,14 @@ import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator, Awaitable, Callable, Dict, Optional
+from typing import AsyncIterator, Awaitable, Callable
 
 import pyudev
-from sqlalchemy import select
-
 from backend.config import get_config
-from backend.db import BackupTaskRecord, session_scope
 from backend.devices import get_device_by_path
 from backend.models import BackupStatus, BackupTaskDTO, BackupType
 from backend.rsync_parser import RsyncOutputParser
+from backend.task_store import TaskStore
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +36,7 @@ def check_rsync_available() -> None:
 
 class ProgressBus:
     def __init__(self):
-        self._queues: Dict[str, set[asyncio.Queue]] = {}
+        self._queues: dict[str, set[asyncio.Queue]] = {}
         self._lock = asyncio.Lock()
 
     async def publish(self, backup_id: str, size_completed: int, size_total: int) -> None:
@@ -97,12 +95,10 @@ task_event_bus = TaskEventBus()
 
 @dataclass
 class RunningBackup:
-    task: Optional[asyncio.Task] = None
-    process: Optional[asyncio.subprocess.Process] = None
-    output_consumer: Optional[asyncio.Task] = None
-    cleanup: Optional[Callable[[BackupStatus], Awaitable[None]]] = None
+    process: asyncio.subprocess.Process | None = None
+    cleanup: Callable[[BackupStatus], Awaitable[None]] | None = None
     cancel_requested: bool = False
-    parser: Optional[RsyncOutputParser] = None
+    parser: RsyncOutputParser | None = None
     size_total: int = 0
 
 
@@ -114,26 +110,14 @@ class MountHandle:
 
 class BackupManager:
     def __init__(self):
-        self._active: Dict[str, RunningBackup] = {}
+        self._active: dict[str, RunningBackup] = {}
         self._background_tasks: set[asyncio.Task] = set()
         self._progress = ProgressBus()
+        self._tasks = TaskStore()
 
     async def fail_stale_tasks(self) -> int:
         """Mark all PENDING/IN_PROGRESS tasks as FAILED on startup (stale from previous run)."""
-        stale_statuses = [BackupStatus.PENDING.value, BackupStatus.IN_PROGRESS.value]
-        count = 0
-        async with session_scope() as session:
-            from sqlalchemy import update
-            stmt = (
-                update(BackupTaskRecord)
-                .where(BackupTaskRecord.status.in_(stale_statuses))
-                .values(
-                    status=BackupStatus.FAILED.value,
-                    finished_at=datetime.datetime.utcnow(),
-                )
-            )
-            result = await session.execute(stmt)
-            count = result.rowcount
+        count = await self._tasks.fail_stale_tasks([BackupStatus.PENDING, BackupStatus.IN_PROGRESS])
         if count > 0:
             logger.info("Marked %d stale tasks as failed from previous run", count)
         return count
@@ -199,30 +183,15 @@ class BackupManager:
         return iterator()
 
     async def list_tasks(self, limit: int = 20, offset: int = 0) -> list[BackupTaskDTO]:
-        async with session_scope() as session:
-            stmt = (
-                select(BackupTaskRecord)
-                .order_by(BackupTaskRecord.id.desc())
-                .offset(offset)
-                .limit(limit)
-            )
-            result = await session.execute(stmt)
-            records = result.scalars().all()
-            return [self._record_to_dto(record) for record in records]
+        return await self._tasks.list(limit=limit, offset=offset)
 
-    async def get_task(self, backup_id: str) -> Optional[BackupTaskDTO]:
-        async with session_scope() as session:
-            stmt = select(BackupTaskRecord).where(BackupTaskRecord.backup_id == backup_id)
-            result = await session.execute(stmt)
-            record = result.scalars().one_or_none()
-            if record is None:
-                return None
-            return self._record_to_dto(record)
+    async def get_task(self, backup_id: str) -> BackupTaskDTO | None:
+        return await self._tasks.get(backup_id)
 
     # ------------------------------------------------------------------ #
     # Auto backup entry point (used by DeviceMonitor)
     # ------------------------------------------------------------------ #
-    async def handle_device(self, device: pyudev.Device) -> Optional[str]:
+    async def handle_device(self, device: pyudev.Device) -> str | None:
         config = await get_config()
         if not config.auto_backup_enabled:
             logger.info("Auto backup disabled. Ignoring %s", device.device_node)
@@ -235,7 +204,7 @@ class BackupManager:
         self, mount: MountHandle, target: Path, backup_type: BackupType,
     ) -> str:
         """Shared device backup logic: backup from mount point with unmount cleanup."""
-        cleanup: Optional[Callable[[BackupStatus], Awaitable[None]]] = None
+        cleanup: Callable[[BackupStatus], Awaitable[None]] | None = None
         if mount.owned:
             cleanup = lambda _: self._unmount_path(mount.path)
         try:
@@ -349,12 +318,12 @@ class BackupManager:
         source: Path,
         target: Path,
         backup_type: BackupType,
-        cleanup: Optional[Callable[[BackupStatus], Awaitable[None]]] = None,
+        cleanup: Callable[[BackupStatus], Awaitable[None]] | None = None,
     ) -> str:
         size_total = await asyncio.to_thread(self._calculate_size_total, source)
         backup_id = uuid.uuid4().hex
         logger.debug("Creating task record for backup %s", backup_id)
-        await self._create_task_record(
+        await self._tasks.create(
             backup_id=backup_id,
             source=str(source),
             target=str(target),
@@ -375,7 +344,6 @@ class BackupManager:
                 size_total=size_total,
             )
         )
-        running.task = job
         self._track_background_task(backup_id, job)
         return backup_id
 
@@ -396,10 +364,10 @@ class BackupManager:
         if size_total and size_total > 0:
             running.size_total = size_total
         cleanup_cb = running.cleanup
-        final_status: Optional[BackupStatus] = None
+        final_status: BackupStatus | None = None
         started_at = datetime.datetime.utcnow()
         logger.debug("Backup %s transitioning to IN_PROGRESS", backup_id)
-        await self._update_task(
+        await self._tasks.update_status(
             backup_id,
             status=BackupStatus.IN_PROGRESS,
             started_at=started_at,
@@ -410,26 +378,21 @@ class BackupManager:
         await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
 
         if running.cancel_requested:
-            final_status = BackupStatus.CANCELLED
-            await self._finalize_task(backup_id, final_status, started_at)
-            await self._publish_task_update()
-            await self._complete_cleanup(backup_id, cleanup_cb, final_status)
+            await self._finish_backup(backup_id, BackupStatus.CANCELLED, started_at, cleanup_cb)
             return
 
-        process: Optional[asyncio.subprocess.Process] = None
-        consumer: Optional[asyncio.Task] = None
-        returncode: Optional[int] = None
+        process: asyncio.subprocess.Process | None = None
+        consumer: asyncio.Task | None = None
+        returncode: int | None = None
         try:
             process = await self._launch_rsync(source, target)
             running.process = process
             consumer = asyncio.create_task(
                 self._consume_rsync_output(backup_id, process.stdout, running)
             )
-            running.output_consumer = consumer
             returncode = await process.wait()
             await consumer
             consumer = None
-            running.output_consumer = None
         except asyncio.CancelledError:
             running.cancel_requested = True
             final_status = BackupStatus.CANCELLED
@@ -449,7 +412,15 @@ class BackupManager:
                 final_status = BackupStatus.COMPLETED
             else:
                 final_status = BackupStatus.FAILED
+        await self._finish_backup(backup_id, final_status, started_at, cleanup_cb)
 
+    async def _finish_backup(
+        self,
+        backup_id: str,
+        final_status: BackupStatus,
+        started_at: datetime.datetime,
+        cleanup_cb: Callable[[BackupStatus], Awaitable[None]] | None,
+    ) -> None:
         await self._finalize_task(backup_id, final_status, started_at)
         await self._publish_task_update()
         await self._complete_cleanup(backup_id, cleanup_cb, final_status)
@@ -477,7 +448,7 @@ class BackupManager:
     async def _consume_rsync_output(
         self,
         backup_id: str,
-        stream: Optional[asyncio.StreamReader],
+        stream: asyncio.StreamReader | None,
         running: RunningBackup,
     ) -> None:
         if not stream:
@@ -530,115 +501,43 @@ class BackupManager:
                 size_total_hint=size_total_hint,
             )
 
-    async def _update_task(
-        self,
-        backup_id: str,
-        *,
-        status: BackupStatus,
-        started_at: Optional[datetime.datetime] = None,
-    ) -> None:
-        async with session_scope() as session:
-            stmt = select(BackupTaskRecord).where(BackupTaskRecord.backup_id == backup_id)
-            result = await session.execute(stmt)
-            record = result.scalars().one_or_none()
-            if record is None:
-                return
-            record.status = status.value
-            if started_at is not None:
-                record.started_at = started_at
-            session.add(record)
-
     async def _finalize_task(
         self,
         backup_id: str,
         status: BackupStatus,
         started_at: datetime.datetime,
     ) -> None:
-        finished_at = datetime.datetime.utcnow()
-        async with session_scope() as session:
-            stmt = select(BackupTaskRecord).where(BackupTaskRecord.backup_id == backup_id)
-            result = await session.execute(stmt)
-            record = result.scalars().one_or_none()
-            if record is None:
-                return
-            record.status = status.value
-            record.started_at = record.started_at or started_at
-            record.finished_at = finished_at
-            if status == BackupStatus.COMPLETED and record.size_total and record.size_completed < record.size_total:
-                record.size_completed = record.size_total
-            session.add(record)
-            size_total = record.size_total
-            size_completed = record.size_completed
-        await self._progress.publish(backup_id, size_completed, size_total)
-
-    async def _create_task_record(
-        self,
-        *,
-        backup_id: str,
-        source: str,
-        target: str,
-        status: BackupStatus,
-        backup_type: BackupType,
-        size_total: int,
-    ) -> None:
-        created_at = datetime.datetime.utcnow()
-        async with session_scope() as session:
-            record = BackupTaskRecord(
-                backup_id=backup_id,
-                source=source,
-                target=target,
-                status=status.value,
-                type=backup_type.value,
-                started_at=created_at,
-                finished_at=None,
-                size_total=size_total,
-                size_completed=0,
-            )
-            session.add(record)
+        progress_payload = await self._tasks.finalize(
+            backup_id,
+            status=status,
+            started_at=started_at,
+        )
+        if progress_payload:
+            size_completed, size_total = progress_payload
+            await self._progress.publish(backup_id, size_completed, size_total)
 
     async def _update_progress(
         self,
         backup_id: str,
         *,
-        size_completed: Optional[int],
-        size_total_hint: Optional[int] = None,
+        size_completed: int | None,
+        size_total_hint: int | None = None,
         force_publish: bool = False,
     ) -> None:
-        async with session_scope() as session:
-            stmt = select(BackupTaskRecord).where(BackupTaskRecord.backup_id == backup_id)
-            result = await session.execute(stmt)
-            record = result.scalars().one_or_none()
-            if record is None:
-                return
-
-            updated = False
-            size_total_value = record.size_total
-            size_completed_value = record.size_completed
-
-            if (
-                size_total_hint is not None
-                and size_total_hint > 0
-                and size_total_hint != record.size_total
-            ):
-                record.size_total = size_total_hint
-                size_total_value = size_total_hint
-                updated = True
-
-            if size_completed is not None and size_completed != record.size_completed:
-                record.size_completed = size_completed
-                size_completed_value = size_completed
-                updated = True
-
-            if updated:
-                session.add(record)
-
-        if updated or force_publish:
+        progress_payload = await self._tasks.update_progress(
+            backup_id,
+            size_completed=size_completed,
+            size_total_hint=size_total_hint,
+            force_publish=force_publish,
+        )
+        if progress_payload:
+            size_completed_value, size_total_value = progress_payload
             await self._progress.publish(backup_id, size_completed_value, size_total_value)
 
     async def _complete_cleanup(
         self,
         backup_id: str,
-        cleanup_cb: Optional[Callable[[BackupStatus], Awaitable[None]]],
+        cleanup_cb: Callable[[BackupStatus], Awaitable[None]] | None,
         final_status: BackupStatus,
     ) -> None:
         if cleanup_cb:
@@ -672,15 +571,3 @@ class BackupManager:
                     continue
         return total_size
 
-    def _record_to_dto(self, record: BackupTaskRecord) -> BackupTaskDTO:
-        return BackupTaskDTO(
-            backup_id=record.backup_id,
-            source=record.source,
-            target=record.target,
-            status=BackupStatus(record.status),
-            type=BackupType(record.type),
-            started_at=record.started_at,
-            finished_at=record.finished_at,
-            size_total=record.size_total,
-            size_completed=record.size_completed,
-        )
