@@ -59,6 +59,12 @@ class TaskDetail(containers.VerticalGroup):
         with containers.HorizontalGroup(id="detail-header"):
             yield Label("Task Details", id="detail-title")
             yield Label("", id="detail-status")
+        with containers.VerticalGroup(classes="detail-section"):
+            yield Label("Source", classes="detail-label")
+            yield Label("", id="detail-source", classes="detail-value")
+        with containers.VerticalGroup(classes="detail-section"):
+            yield Label("Target", classes="detail-label")
+            yield Label("", id="detail-target", classes="detail-value")
         with containers.HorizontalGroup():
             with containers.VerticalGroup(classes="detail-section"):
                 yield Label("Backup ID", classes="detail-label")
@@ -66,12 +72,6 @@ class TaskDetail(containers.VerticalGroup):
             with containers.VerticalGroup(classes="detail-section"):
                 yield Label("Type", classes="detail-label")
                 yield Label("", id="detail-type", classes="detail-value")
-        with containers.VerticalGroup(classes="detail-section"):
-            yield Label("Source", classes="detail-label")
-            yield Label("", id="detail-source", classes="detail-value")
-        with containers.VerticalGroup(classes="detail-section"):
-            yield Label("Target", classes="detail-label")
-            yield Label("", id="detail-target", classes="detail-value")
         with containers.VerticalGroup(id="progress-section"):
             yield Label("Progress", classes="detail-label")
             yield ProgressBar(total=100, show_eta=False, id="detail-progress-bar")
