@@ -4,7 +4,6 @@ import asyncio
 import datetime
 import logging
 import os
-import shutil
 import subprocess
 import uuid
 from contextlib import suppress
@@ -25,6 +24,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MOUNT_ROOT = "/mnt"
 MOUNT_PREFIX = "sd-backup"
+
+
+def check_rsync_available() -> None:
+    """Check if rsync is available. Raises RuntimeError if not found."""
+    try:
+        result = subprocess.run(["rsync", "--version"], capture_output=True, check=True, text=True)
+        version_line = result.stdout.split("\n", 1)[0]
+        logger.info("Found %s", version_line)
+    except FileNotFoundError:
+        raise RuntimeError("rsync is required but not found. Please install rsync.")
 
 
 class ProgressBus:
@@ -136,10 +145,11 @@ class BackupManager:
     # Public API used by GraphQL
     # ------------------------------------------------------------------ #
     async def start_manual_backup(self, source: str, target: str) -> str:
+        source_path = Path(source)
         target_path = Path(target).expanduser().resolve()
 
-        # Device path (e.g., /dev/sda1)
-        if source.startswith("/dev/"):
+        # Block device (e.g., /dev/sda1)
+        if source_path.is_block_device():
             device = get_device_by_path(source)
             if device is None:
                 raise ValueError(f"Device not found: {source}")
@@ -147,7 +157,7 @@ class BackupManager:
             return await self._backup_from_mount(mount_point, target_path, BackupType.MANUAL)
 
         # Regular directory/file backup
-        source_path = Path(source).expanduser().resolve()
+        source_path = source_path.expanduser().resolve()
         if not source_path.exists():
             raise FileNotFoundError(f"Source path {source_path} does not exist.")
         return await self._enqueue_backup(
@@ -376,31 +386,16 @@ class BackupManager:
         consumer: Optional[asyncio.Task] = None
         returncode: Optional[int] = None
         try:
-            try:
-                process = await self._launch_rsync(source, target)
-            except FileNotFoundError:
-                logger.warning("rsync not found. Falling back to Python copy for %s", backup_id)
-                await asyncio.to_thread(self._python_copy, source, target)
-                process = None
-                await self._update_progress(
-                    backup_id,
-                    size_completed=running.size_total or size_total,
-                    size_total_hint=running.size_total or size_total,
-                )
-                returncode = 0
-
+            process = await self._launch_rsync(source, target)
             running.process = process
-            if process:
-                consumer = asyncio.create_task(
-                    self._consume_rsync_output(backup_id, process.stdout, running)
-                )
-                running.output_consumer = consumer
-                returncode = await process.wait()
-                await consumer
-                consumer = None
-                running.output_consumer = None
-            elif returncode is None:
-                returncode = 0
+            consumer = asyncio.create_task(
+                self._consume_rsync_output(backup_id, process.stdout, running)
+            )
+            running.output_consumer = consumer
+            returncode = await process.wait()
+            await consumer
+            consumer = None
+            running.output_consumer = None
         except asyncio.CancelledError:
             running.cancel_requested = True
             final_status = BackupStatus.CANCELLED
@@ -500,19 +495,6 @@ class BackupManager:
                 size_completed=completed,
                 size_total_hint=size_total_hint,
             )
-
-    def _python_copy(self, source: Path, target: Path) -> None:
-        if source.is_file():
-            shutil.copy2(source, target / source.name)
-            return
-        for root, dirs, files in os.walk(source):
-            rel_root = Path(root).relative_to(source)
-            dest_dir = target / rel_root
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            for file_name in files:
-                src_file = Path(root) / file_name
-                dest_file = dest_dir / file_name
-                shutil.copy2(src_file, dest_file)
 
     async def _update_task(
         self,

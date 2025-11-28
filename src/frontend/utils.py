@@ -83,3 +83,4 @@ class ProgressSubscriptionManager:
         finally:
             self._subs.pop(backup_id, None)
 
+

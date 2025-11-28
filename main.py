@@ -11,6 +11,7 @@ import typer
 import uvicorn
 from asyncer import syncify
 
+from backend.backup import check_rsync_available
 from backend.config import init_config_store
 from backend.server import app
 from frontend.app import SDBackupApp
@@ -70,10 +71,11 @@ async def main(
     if headless and frontend_only:
         raise typer.BadParameter("Cannot combine --frontend-only with --headless", param_name="frontend_only")
 
-    if not frontend_only:
-        await init_config_store(str(db_path))
-
     configure_logging(str(log_path) if log_path else None, log_level)
+
+    if not frontend_only:
+        check_rsync_available()
+        await init_config_store(str(db_path))
 
     if frontend_only and listen_port == 0:
         raise typer.BadParameter("--listen-port must be set when --frontend-only is used", param_name="listen_port")
