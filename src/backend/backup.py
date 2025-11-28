@@ -102,6 +102,26 @@ class BackupManager:
         self._background_tasks: set[asyncio.Task] = set()
         self._progress = ProgressBus()
 
+    async def fail_stale_tasks(self) -> int:
+        """Mark all PENDING/IN_PROGRESS tasks as FAILED on startup (stale from previous run)."""
+        stale_statuses = [BackupStatus.PENDING.value, BackupStatus.IN_PROGRESS.value]
+        count = 0
+        async with session_scope() as session:
+            from sqlalchemy import update
+            stmt = (
+                update(BackupTaskRecord)
+                .where(BackupTaskRecord.status.in_(stale_statuses))
+                .values(
+                    status=BackupStatus.FAILED.value,
+                    finished_at=datetime.datetime.utcnow(),
+                )
+            )
+            result = await session.execute(stmt)
+            count = result.rowcount
+        if count > 0:
+            logger.info("Marked %d stale tasks as failed from previous run", count)
+        return count
+
     async def _publish_task_update(self) -> None:
         """Fetch current task list and publish to subscribers."""
         tasks = await self.list_tasks(limit=50)

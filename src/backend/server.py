@@ -24,6 +24,9 @@ async def device_callback(device):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global monitor
+    # Mark stale tasks as failed from previous run
+    await backup_manager.fail_stale_tasks()
+    
     monitor = DeviceMonitor(callback=device_callback)
     await monitor.start()
     try:
