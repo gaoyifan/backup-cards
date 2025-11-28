@@ -214,7 +214,8 @@ class TasksScreen(PageScreen):
 
     def __init__(self) -> None:
         super().__init__()
-        self._refresh_task: Optional[asyncio.Task] = None
+        self._tasks_subscription: Optional[asyncio.Task] = None
+        self._progress_subs: dict[str, asyncio.Task] = {}
         self._tasks: list[dict] = []
         self._selected_task: Optional[dict] = None
 
@@ -235,59 +236,93 @@ class TasksScreen(PageScreen):
         yield Footer()
 
     def on_mount(self) -> None:
-        logger.debug("TasksScreen mounted, starting refresh loop")
         table = self.query_one("#tasks-table", DataTable)
         table.add_columns("Status", "Type", "Source", "Target", "Progress")
-        self._refresh_task = asyncio.create_task(self._refresh_loop())
+        self._tasks_subscription = asyncio.create_task(self._subscribe_tasks())
 
     def on_unmount(self) -> None:
-        logger.debug("TasksScreen unmounting, cancelling refresh task")
-        if self._refresh_task:
-            self._refresh_task.cancel()
+        if self._tasks_subscription:
+            self._tasks_subscription.cancel()
+        for sub in self._progress_subs.values():
+            sub.cancel()
 
-    async def _refresh_loop(self) -> None:
-        """Periodically refresh task list."""
-        logger.debug("TasksScreen refresh loop started")
-        while True:
-            if self.app.auto_refresh_enabled:
-                await self._refresh_data()
-            await asyncio.sleep(3)
+    async def _subscribe_tasks(self) -> None:
+        """Subscribe to task list updates."""
+        query = """subscription { backupTasksUpdated {
+            backupId status type source target sizeCompleted sizeTotal
+        }}"""
+        try:
+            async for payload in self.app.client.subscribe(query):
+                self._tasks = payload.get("backupTasksUpdated", [])
+                self._update_table()
+                self._update_task_count()
+                self._sync_progress_subscriptions()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("Tasks subscription error: %s", e)
+
+    def _sync_progress_subscriptions(self) -> None:
+        """Start/stop progress subscriptions for active tasks."""
+        active_ids = {t["backupId"] for t in self._tasks if t.get("status") == "IN_PROGRESS"}
+
+        # Stop subscriptions for tasks no longer active
+        for backup_id in list(self._progress_subs.keys()):
+            if backup_id not in active_ids:
+                self._progress_subs.pop(backup_id).cancel()
+
+        # Start subscriptions for new active tasks
+        for backup_id in active_ids:
+            if backup_id not in self._progress_subs:
+                self._progress_subs[backup_id] = asyncio.create_task(
+                    self._subscribe_progress(backup_id)
+                )
+
+    async def _subscribe_progress(self, backup_id: str) -> None:
+        """Subscribe to progress updates for a specific task."""
+        query = """subscription($id: ID!) { progress(backupId: $id) { sizeCompleted sizeTotal }}"""
+        try:
+            async for payload in self.app.client.subscribe(query, variable_values={"id": backup_id}):
+                progress = payload.get("progress", {})
+                self._update_task_progress(backup_id, progress)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("Progress subscription error for %s: %s", backup_id, e)
+        finally:
+            self._progress_subs.pop(backup_id, None)
+
+    def _update_task_progress(self, backup_id: str, progress: dict) -> None:
+        """Update a task's progress in the list and refresh UI."""
+        for task in self._tasks:
+            if task.get("backupId") == backup_id:
+                task["sizeCompleted"] = progress.get("sizeCompleted", 0)
+                task["sizeTotal"] = progress.get("sizeTotal", 0)
+                break
+        self._update_table()
+        # Also update detail panel if this task is selected
+        if self._selected_task and self._selected_task.get("backupId") == backup_id:
+            self._selected_task["sizeCompleted"] = progress.get("sizeCompleted", 0)
+            self._selected_task["sizeTotal"] = progress.get("sizeTotal", 0)
+            self.query_one(TaskDetail).update_task(self._selected_task)
+
+    def _update_task_count(self) -> None:
+        active = sum(1 for t in self._tasks if t.get("status") in {"PENDING", "IN_PROGRESS"})
+        text = f"[yellow]{active} active[/yellow] · {len(self._tasks)} total" if active else f"{len(self._tasks)} tasks"
+        self.query_one("#task-count", Label).update(text)
 
     async def _refresh_data(self) -> None:
-        """Fetch and update task list."""
-        client = self.app.client
-
-        query = """
-        query Tasks($limit: Int!) {
-            backupTasks(limit: $limit) {
-                backupId
-                status
-                type
-                source
-                target
-                sizeCompleted
-                sizeTotal
-            }
-        }
-        """
+        """Fetch task list manually (for manual refresh button)."""
+        query = """query { backupTasks(limit: 50) {
+            backupId status type source target sizeCompleted sizeTotal
+        }}"""
         try:
-            logger.debug("Executing tasks query")
-            result = await client.execute(query, variable_values={"limit": 50})
-            logger.debug("Tasks query returned %d tasks", len(result.get("backupTasks", [])))
+            result = await self.app.client.execute(query)
+            self._tasks = result.get("backupTasks", [])
+            self._update_table()
+            self._update_task_count()
         except Exception as e:
             logger.warning("Failed to fetch tasks: %s", e)
-            return
-
-        self._tasks = result.get("backupTasks", [])
-        self._update_table()
-        
-        # Update task count
-        count_label = self.query_one("#task-count", Label)
-        active = sum(1 for t in self._tasks if t.get("status") in {"PENDING", "IN_PROGRESS"})
-        if active > 0:
-            count_label.update(f"[yellow]{active} active[/yellow] · {len(self._tasks)} total")
-        else:
-            count_label.update(f"{len(self._tasks)} tasks")
 
     def _update_table(self) -> None:
         """Update the data table with current tasks."""

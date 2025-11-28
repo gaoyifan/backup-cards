@@ -8,9 +8,9 @@ from typing import AsyncGenerator, List, Optional
 
 import strawberry
 
-from backend.backup import BackupManager
+from backend.backup import BackupManager, task_event_bus
 from backend.config import Config, get_config, update_config
-from backend.devices import list_available_devices
+from backend.devices import device_event_bus, list_available_devices
 from backend.models import BackupStatus, BackupTaskDTO, BackupType, DeviceInfo
 
 logger = logging.getLogger(__name__)
@@ -155,6 +155,24 @@ class Subscription:
     async def progress(self, backup_id: strawberry.ID) -> AsyncGenerator[BackupProgressType, None]:
         async for size_completed, size_total in backup_manager.subscribe_progress(str(backup_id)):
             yield BackupProgressType(size_completed=size_completed, size_total=size_total)
+
+    @strawberry.subscription
+    async def backup_tasks_updated(self) -> AsyncGenerator[List[BackupTaskType], None]:
+        # Emit initial state
+        tasks = await backup_manager.list_tasks(limit=50)
+        yield [_task_to_type(task) for task in tasks]
+        # Stream updates
+        async for tasks in task_event_bus.stream():
+            yield [_task_to_type(task) for task in tasks]
+
+    @strawberry.subscription
+    async def devices_updated(self) -> AsyncGenerator[List[DeviceType], None]:
+        # Emit initial state
+        devices = list_available_devices()
+        yield [_device_to_type(device) for device in devices]
+        # Stream updates
+        async for devices in device_event_bus.stream():
+            yield [_device_to_type(device) for device in devices]
 
 
 schema = strawberry.Schema(query=Query, mutation=Mutation, subscription=Subscription)

@@ -55,6 +55,36 @@ class ProgressBus:
                         self._queues.pop(backup_id, None)
 
 
+class TaskEventBus:
+    """Pub/sub bus for task list updates."""
+
+    def __init__(self):
+        self._queues: set[asyncio.Queue] = set()
+        self._lock = asyncio.Lock()
+
+    async def publish(self, tasks: list[BackupTaskDTO]) -> None:
+        async with self._lock:
+            queues = list(self._queues)
+        for queue in queues:
+            queue.put_nowait(tasks)
+
+    async def stream(self) -> AsyncIterator[list[BackupTaskDTO]]:
+        queue: asyncio.Queue = asyncio.Queue()
+        async with self._lock:
+            self._queues.add(queue)
+
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            async with self._lock:
+                self._queues.discard(queue)
+
+
+# Global task event bus instance
+task_event_bus = TaskEventBus()
+
+
 @dataclass
 class RunningBackup:
     task: Optional[asyncio.Task] = None
@@ -71,6 +101,15 @@ class BackupManager:
         self._active: Dict[str, RunningBackup] = {}
         self._background_tasks: set[asyncio.Task] = set()
         self._progress = ProgressBus()
+
+    async def _publish_task_update(self) -> None:
+        """Fetch current task list and publish to subscribers."""
+        tasks = await self.list_tasks(limit=50)
+        await task_event_bus.publish(tasks)
+
+    def subscribe_tasks(self) -> AsyncIterator[list[BackupTaskDTO]]:
+        """Subscribe to task list updates."""
+        return task_event_bus.stream()
 
     # ------------------------------------------------------------------ #
     # Public API used by GraphQL
@@ -253,6 +292,7 @@ class BackupManager:
             backup_type=backup_type,
             size_total=size_total,
         )
+        await self._publish_task_update()
 
         logger.debug("Enqueuing backup %s", backup_id)
         running = RunningBackup(cleanup=cleanup, parser=RsyncOutputParser(), size_total=size_total)
@@ -294,6 +334,7 @@ class BackupManager:
             status=BackupStatus.IN_PROGRESS,
             started_at=started_at,
         )
+        await self._publish_task_update()
         logger.debug("Backup %s marked IN_PROGRESS", backup_id)
 
         await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
@@ -301,6 +342,7 @@ class BackupManager:
         if running.cancel_requested:
             final_status = BackupStatus.CANCELLED
             await self._finalize_task(backup_id, final_status, started_at)
+            await self._publish_task_update()
             await self._complete_cleanup(backup_id, cleanup_cb, final_status)
             return
 
@@ -354,6 +396,7 @@ class BackupManager:
                 final_status = BackupStatus.FAILED
 
         await self._finalize_task(backup_id, final_status, started_at)
+        await self._publish_task_update()
         await self._complete_cleanup(backup_id, cleanup_cb, final_status)
 
     async def _launch_rsync(self, source: Path, target: Path) -> asyncio.subprocess.Process:

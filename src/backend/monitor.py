@@ -4,6 +4,8 @@ from typing import Awaitable, Callable, Optional
 
 import pyudev
 
+from backend.devices import publish_device_update
+
 logger = logging.getLogger(__name__)
 
 
@@ -40,6 +42,10 @@ class DeviceMonitor:
             device = self.monitor.poll(0)
             if device is None:
                 break
+
+            # Publish device update for any block device event (add/remove)
+            asyncio.create_task(publish_device_update())
+
             if not self.match_device(device):
                 continue
             logger.info(f"[MATCH] device_node = {device.device_node}")

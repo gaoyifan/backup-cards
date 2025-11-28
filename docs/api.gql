@@ -52,4 +52,6 @@ type Mutation {
 
 type Subscription {
   progress(backupId: ID!): BackupProgress!
+  backupTasksUpdated: [BackupTask!]!
+  devicesUpdated: [Device!]!
 }

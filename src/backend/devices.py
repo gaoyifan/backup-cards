@@ -1,13 +1,50 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import Dict, List
+from typing import AsyncIterator, Dict, List
 
 import pyudev
 
 from backend.models import DeviceInfo
 
 logger = logging.getLogger(__name__)
+
+
+class DeviceEventBus:
+    """Pub/sub bus for device list updates."""
+
+    def __init__(self):
+        self._queues: set[asyncio.Queue] = set()
+        self._lock = asyncio.Lock()
+
+    async def publish(self, devices: List[DeviceInfo]) -> None:
+        async with self._lock:
+            queues = list(self._queues)
+        for queue in queues:
+            queue.put_nowait(devices)
+
+    async def stream(self) -> AsyncIterator[List[DeviceInfo]]:
+        queue: asyncio.Queue = asyncio.Queue()
+        async with self._lock:
+            self._queues.add(queue)
+
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            async with self._lock:
+                self._queues.discard(queue)
+
+
+# Global device event bus instance
+device_event_bus = DeviceEventBus()
+
+
+async def publish_device_update() -> None:
+    """Fetch current device list and publish to subscribers."""
+    devices = list_available_devices()
+    await device_event_bus.publish(devices)
 
 
 def list_available_devices() -> List[DeviceInfo]:

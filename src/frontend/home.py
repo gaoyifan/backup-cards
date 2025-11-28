@@ -7,7 +7,7 @@ import logging
 from contextlib import suppress
 from typing import Optional
 
-from textual import containers, on
+from textual import containers
 from textual.app import ComposeResult
 from textual.reactive import reactive
 from textual.widgets import Footer, Label, Markdown, ProgressBar, Rule, Static
@@ -280,8 +280,9 @@ class HomeScreen(PageScreen):
 
     def __init__(self) -> None:
         super().__init__()
-        self._refresh_task: Optional[asyncio.Task] = None
-        self._progress_task: Optional[asyncio.Task] = None
+        self._tasks_sub: Optional[asyncio.Task] = None
+        self._devices_sub: Optional[asyncio.Task] = None
+        self._progress_sub: Optional[asyncio.Task] = None
         self._active_backup_id: Optional[str] = None
 
     def compose(self) -> ComposeResult:
@@ -294,144 +295,107 @@ class HomeScreen(PageScreen):
         yield Footer()
 
     def on_mount(self) -> None:
-        logger.debug("HomeScreen mounted, starting refresh loop")
-        self._refresh_task = asyncio.create_task(self._refresh_loop())
+        logger.debug("HomeScreen mounted, starting subscriptions")
+        asyncio.create_task(self._load_config())
+        self._tasks_sub = asyncio.create_task(self._subscribe_tasks())
+        self._devices_sub = asyncio.create_task(self._subscribe_devices())
 
     def on_unmount(self) -> None:
-        logger.debug("HomeScreen unmounting, cancelling tasks")
-        if self._refresh_task:
-            self._refresh_task.cancel()
-        if self._progress_task:
-            self._progress_task.cancel()
+        for task in (self._tasks_sub, self._devices_sub, self._progress_sub):
+            if task:
+                task.cancel()
 
-    async def _refresh_loop(self) -> None:
-        """Periodically refresh dashboard data."""
-        logger.debug("HomeScreen refresh loop started")
-        while True:
-            if self.app.auto_refresh_enabled:
-                await self._refresh_data()
-            await asyncio.sleep(2)
-
-    async def _refresh_data(self) -> None:
-        """Fetch and update dashboard data."""
-        client = self.app.client
-
-        query = """
-        query Dashboard {
-            config {
-                autoBackupEnabled
-            }
-            backupTasks(limit: 5) {
-                backupId
-                status
-                sizeCompleted
-                sizeTotal
-                source
-                target
-            }
-            availableDevices {
-                devicePath
-                mountPoint
-            }
-        }
-        """
+    async def _load_config(self) -> None:
+        """Load config (no subscription available for config)."""
         try:
-            logger.debug("Executing dashboard query")
-            result = await client.execute(query)
-            logger.debug("Dashboard query result: %s", result)
+            result = await self.app.client.execute(
+                "query { config { autoBackupEnabled } }"
+            )
+            self.query_one(QuickStats).auto_backup = result.get("config", {}).get(
+                "autoBackupEnabled", False
+            )
         except Exception as e:
-            logger.warning("Failed to fetch dashboard data: %s", e)
-            return
+            logger.warning("Failed to load config: %s", e)
 
-        # Update quick stats
-        stats = self.query_one(QuickStats)
-        config = result.get("config", {})
-        devices = result.get("availableDevices", [])
-        tasks = result.get("backupTasks", [])
-        
-        stats.devices_count = len(devices)
-        stats.auto_backup = config.get("autoBackupEnabled", False)
-        stats.active_tasks = sum(1 for t in tasks if t.get("status") in {"PENDING", "IN_PROGRESS"})
+    async def _subscribe_tasks(self) -> None:
+        """Subscribe to task list updates."""
+        query = """subscription { backupTasksUpdated {
+            backupId status sizeCompleted sizeTotal source target
+        }}"""
+        try:
+            async for payload in self.app.client.subscribe(query):
+                await self._update_from_tasks(payload.get("backupTasksUpdated", []))
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("Tasks subscription error: %s", e)
 
-        # Update devices
-        device_list = self.query_one(DeviceList)
-        device_list.update_devices(devices)
+    async def _subscribe_devices(self) -> None:
+        """Subscribe to device list updates."""
+        query = """subscription { devicesUpdated { devicePath mountPoint }}"""
+        try:
+            async for payload in self.app.client.subscribe(query):
+                devices = payload.get("devicesUpdated", [])
+                self.query_one(QuickStats).devices_count = len(devices)
+                self.query_one(DeviceList).update_devices(devices)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("Devices subscription error: %s", e)
 
-        # Check for active backup
-        active = next(
-            (t for t in tasks if t.get("status") in {"PENDING", "IN_PROGRESS"}), None
-        )
+    async def _update_from_tasks(self, tasks: list[dict]) -> None:
+        """Update UI from task list."""
+        active_statuses = {"PENDING", "IN_PROGRESS"}
+        active = next((t for t in tasks if t.get("status") in active_statuses), None)
         active_id = active.get("backupId") if active else None
 
-        # Update active backup panel
-        backup_panel = self.query_one(ActiveBackupPanel)
-        backup_panel.backup_id = active_id
-        backup_panel.transfer_text = (
-            f"{self._shorten_path(active.get('source'))} -> {self._shorten_path(active.get('target'))}"
-            if active
-            else ""
+        self.query_one(QuickStats).active_tasks = sum(
+            1 for t in tasks if t.get("status") in active_statuses
         )
+
+        panel = self.query_one(ActiveBackupPanel)
+        panel.backup_id = active_id
+        if active:
+            src, tgt = active.get("source", ""), active.get("target", "")
+            panel.transfer_text = f"{self._shorten(src)} -> {self._shorten(tgt)}"
+            self._update_progress(panel, active.get("sizeCompleted"), active.get("sizeTotal"))
+        else:
+            panel.transfer_text = ""
 
         if active_id != self._active_backup_id:
             self._active_backup_id = active_id
-            await self._restart_progress_subscription(active_id)
+            if self._progress_sub:
+                self._progress_sub.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self._progress_sub
+            if active_id:
+                self._progress_sub = asyncio.create_task(self._subscribe_progress(active_id))
 
-        if active:
-            completed = active.get("sizeCompleted", 0) or 0
-            total = active.get("sizeTotal", 1) or 1
-            percent = (completed / total) * 100 if total > 0 else 0
-            backup_panel.progress = percent
-            backup_panel.progress_text = f"{self._format_bytes(completed)} / {self._format_bytes(total)} ({percent:.1f}%)"
+    def _update_progress(self, panel: ActiveBackupPanel, completed: int | None, total: int | None) -> None:
+        completed, total = completed or 0, total or 1
+        percent = (completed / total) * 100 if total > 0 else 0
+        panel.progress = percent
+        panel.progress_text = f"{self._fmt_bytes(completed)} / {self._fmt_bytes(total)} ({percent:.1f}%)"
 
-    def _format_bytes(self, size: int) -> str:
-        """Format bytes to human readable string."""
-        for unit in ['B', 'KB', 'MB', 'GB']:
+    def _fmt_bytes(self, size: int) -> str:
+        for unit in ("B", "KB", "MB", "GB"):
             if size < 1024:
                 return f"{size:.1f} {unit}"
             size /= 1024
         return f"{size:.1f} TB"
 
-    def _shorten_path(self, path: Optional[str], max_len: int = 32) -> str:
-        """Return a readable path string clipped from the end if needed."""
-        if not path:
-            return "Unknown"
+    def _shorten(self, path: str, max_len: int = 32) -> str:
         return path if len(path) <= max_len else f"...{path[-(max_len - 3):]}"
 
-    async def _restart_progress_subscription(self, backup_id: Optional[str]) -> None:
-        """Start or stop progress subscription."""
-        if self._progress_task:
-            self._progress_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._progress_task
-            self._progress_task = None
-
-        if backup_id:
-            self._progress_task = asyncio.create_task(
-                self._consume_progress(backup_id)
-            )
-
-    async def _consume_progress(self, backup_id: str) -> None:
+    async def _subscribe_progress(self, backup_id: str) -> None:
         """Subscribe to progress updates for active backup."""
-        logger.debug("Starting progress subscription for backup %s", backup_id)
-        client = self.app.client
-        query = """
-        subscription($id: ID!) {
-            progress(backupId: $id) {
-                sizeCompleted
-                sizeTotal
-            }
-        }
-        """
-        backup_panel = self.query_one(ActiveBackupPanel)
+        query = """subscription($id: ID!) { progress(backupId: $id) { sizeCompleted sizeTotal }}"""
+        panel = self.query_one(ActiveBackupPanel)
         try:
-            async for payload in client.subscribe(query, variable_values={"id": backup_id}):
-                progress = payload.get("progress", {})
-                completed = progress.get("sizeCompleted", 0) or 0
-                total = progress.get("sizeTotal", 1) or 1
-                percent = (completed / total) * 100 if total > 0 else 0
-                backup_panel.progress = percent
-                backup_panel.progress_text = f"{self._format_bytes(completed)} / {self._format_bytes(total)} ({percent:.1f}%)"
+            async for payload in self.app.client.subscribe(query, variable_values={"id": backup_id}):
+                p = payload.get("progress", {})
+                self._update_progress(panel, p.get("sizeCompleted"), p.get("sizeTotal"))
         except asyncio.CancelledError:
-            logger.debug("Progress subscription cancelled for backup %s", backup_id)
+            pass
         except Exception as e:
-            logger.warning("Progress subscription error for backup %s: %s", backup_id, e)
+            logger.warning("Progress subscription error: %s", e)
