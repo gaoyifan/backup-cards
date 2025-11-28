@@ -10,6 +10,7 @@ from textual import containers, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import Button, DataTable, Footer, Label, Markdown, ProgressBar, Rule
+from textual.widgets._data_table import RowDoesNotExist
 
 from frontend.page import PageScreen
 from frontend.utils import ProgressSubscriptionManager, calc_percent, fmt_progress
@@ -247,14 +248,18 @@ class TasksScreen(PageScreen):
         self.query_one(TaskDetail).update_task(task)
 
     def _update_selected_from_row(self, row_key) -> None:
-        if not row_key:
+        if row_key is None:
             self._set_selected_task(None)
             return
+
+        table = self.query_one("#tasks-table", DataTable)
         try:
-            idx = self.query_one("#tasks-table", DataTable).get_row_index(row_key)
-            self._set_selected_task(self._tasks[idx] if 0 <= idx < len(self._tasks) else None)
-        except KeyError:
+            idx = table.get_row_index(row_key)
+        except (KeyError, RowDoesNotExist):
             self._set_selected_task(None)
+            return
+
+        self._set_selected_task(self._tasks[idx] if 0 <= idx < len(self._tasks) else None)
 
     @on(DataTable.RowHighlighted)
     def on_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
