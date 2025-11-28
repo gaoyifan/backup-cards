@@ -106,6 +106,12 @@ class RunningBackup:
     size_total: int = 0
 
 
+@dataclass(frozen=True)
+class MountHandle:
+    path: str
+    owned: bool
+
+
 class BackupManager:
     def __init__(self):
         self._active: Dict[str, RunningBackup] = {}
@@ -153,8 +159,8 @@ class BackupManager:
             device = get_device_by_path(source)
             if device is None:
                 raise ValueError(f"Device not found: {source}")
-            mount_point = await self.mount_device(device)
-            return await self._backup_from_mount(mount_point, target_path, BackupType.MANUAL)
+            mount = await self.mount_device(device)
+            return await self._backup_from_mount(mount, target_path, BackupType.MANUAL)
 
         # Regular directory/file backup
         source_path = source_path.expanduser().resolve()
@@ -221,42 +227,47 @@ class BackupManager:
         if not config.auto_backup_enabled:
             logger.info("Auto backup disabled. Ignoring %s", device.device_node)
             return None
-        mount_point = await self.mount_device(device)
-        target_path = await self.resolve_target_path(device, mount_point, config.auto_backup_target_path)
-        return await self._backup_from_mount(mount_point, Path(target_path), BackupType.AUTO)
+        mount = await self.mount_device(device)
+        target_path = await self.resolve_target_path(device, mount.path, config.auto_backup_target_path)
+        return await self._backup_from_mount(mount, Path(target_path), BackupType.AUTO)
 
     async def _backup_from_mount(
-        self, mount_point: str, target: Path, backup_type: BackupType,
+        self, mount: MountHandle, target: Path, backup_type: BackupType,
     ) -> str:
         """Shared device backup logic: backup from mount point with unmount cleanup."""
-        cleanup = lambda _: self._unmount_path(mount_point)
+        cleanup: Optional[Callable[[BackupStatus], Awaitable[None]]] = None
+        if mount.owned:
+            cleanup = lambda _: self._unmount_path(mount.path)
         try:
             return await self._enqueue_backup(
-                source=Path(mount_point), target=target,
+                source=Path(mount.path), target=target,
                 backup_type=backup_type, cleanup=cleanup,
             )
         except Exception:
-            await cleanup(BackupStatus.FAILED)
+            if cleanup:
+                await cleanup(BackupStatus.FAILED)
             raise
 
-    async def mount_device(self, device: pyudev.Device) -> str:
+    async def mount_device(self, device: pyudev.Device) -> MountHandle:
         device_node = device.device_node
         uuid_value = device.get("ID_FS_UUID", "unknown")
         return await asyncio.to_thread(self._mount_device_sync, device_node, uuid_value)
 
-    def _mount_device_sync(self, device_node: str, uuid_value: str) -> str:
+    def _mount_device_sync(self, device_node: str, uuid_value: str) -> MountHandle:
         with open("/proc/mounts", "r", encoding="utf-8") as mounts:
             for line in mounts:
                 parts = line.split()
                 if parts and parts[0] == device_node:
-                    logger.info("Device %s already mounted at %s", device_node, parts[1])
-                    return parts[1]
+                    mount_path = os.path.realpath(parts[1])
+                    logger.info("Device %s already mounted at %s", device_node, mount_path)
+                    return MountHandle(path=mount_path, owned=False)
 
         mount_point = os.path.join(DEFAULT_MOUNT_ROOT, f"{MOUNT_PREFIX}-{uuid_value}")
         os.makedirs(mount_point, exist_ok=True)
         logger.info("Mounting %s to %s", device_node, mount_point)
         subprocess.run(["mount", device_node, mount_point], check=True)
-        return mount_point
+        normalized = os.path.realpath(mount_point)
+        return MountHandle(path=normalized, owned=True)
 
     async def _unmount_path(self, mount_point: str) -> None:
         await asyncio.to_thread(self._unmount_path_sync, mount_point)
@@ -266,6 +277,29 @@ class BackupManager:
             subprocess.run(["umount", mount_point], check=True)
         except subprocess.CalledProcessError as exc:
             logger.warning("Failed to unmount %s: %s", mount_point, exc)
+            return
+        self._remove_temp_mount_dir(mount_point)
+
+    def _remove_temp_mount_dir(self, mount_point: str) -> None:
+        """Remove temporary mount dir created under DEFAULT_MOUNT_ROOT."""
+        try:
+            mount_path = Path(mount_point).resolve()
+            root_path = Path(DEFAULT_MOUNT_ROOT).resolve()
+        except OSError as exc:
+            logger.debug("Skipped resolving mount path %s: %s", mount_point, exc)
+            return
+
+        prefix = f"{MOUNT_PREFIX}-"
+        if mount_path.parent != root_path or not mount_path.name.startswith(prefix):
+            return
+
+        try:
+            mount_path.rmdir()
+            logger.debug("Removed temporary mount directory %s", mount_path)
+        except FileNotFoundError:
+            logger.debug("Mount directory %s already removed", mount_path)
+        except OSError as exc:
+            logger.warning("Failed to remove mount directory %s: %s", mount_path, exc)
 
     async def resolve_target_path(self, device: pyudev.Device, source_path: str, template: str) -> str:
         uuid_value = device.get("ID_FS_UUID", "unknown")

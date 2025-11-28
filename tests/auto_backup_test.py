@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from backend.backup import MountHandle
 from backend.config import Config
 from backend.schema import backup_manager
 
@@ -16,8 +17,10 @@ class TestAutoBackup(unittest.IsolatedAsyncioTestCase):
 
         config = Config(auto_backup_enabled=True, auto_backup_target_path="~/backups/{date}")
 
+        mount_handle = MountHandle(path="/mnt/test", owned=True)
+
         with patch("backend.backup.get_config", AsyncMock(return_value=config)), patch.object(
-            backup_manager, "mount_device", AsyncMock(return_value="/mnt/test")
+            backup_manager, "mount_device", AsyncMock(return_value=mount_handle)
         ) as mock_mount, patch.object(
             backup_manager,
             "resolve_target_path",
@@ -28,7 +31,7 @@ class TestAutoBackup(unittest.IsolatedAsyncioTestCase):
             backup_id = await backup_manager.handle_device(mock_device)
 
         mock_mount.assert_awaited_once_with(mock_device)
-        mock_resolve.assert_awaited_once_with(mock_device, "/mnt/test", config.auto_backup_target_path)
+        mock_resolve.assert_awaited_once_with(mock_device, mount_handle.path, config.auto_backup_target_path)
         mock_enqueue.assert_awaited_once()
         self.assertEqual(backup_id, "abc123")
 
