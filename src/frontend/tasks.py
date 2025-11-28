@@ -12,9 +12,9 @@ from textual.binding import Binding
 from textual.widgets import Button, DataTable, Footer, Label, Markdown, ProgressBar, Rule
 
 from frontend.page import PageScreen
+from frontend.utils import ProgressSubscriptionManager, calc_percent, fmt_progress, shorten_path
 
 logger = logging.getLogger(__name__)
-
 
 TASKS_MD = """\
 # 📋 Backup Tasks
@@ -22,7 +22,6 @@ TASKS_MD = """\
 View your backup history and manage running tasks. Select a row to see details.
 
 """
-
 
 STATUS_STYLES = {
     "COMPLETED": "[green]✓ Completed[/green]",
@@ -45,44 +44,14 @@ class TaskDetail(containers.VerticalGroup):
         border: wide $primary 30%;
         
         &.hidden { display: none; }
-        
-        #detail-header {
-            height: auto;
-            margin-bottom: 1;
-        }
-        
-        #detail-title {
-            text-style: bold;
-            width: 1fr;
-        }
-        
-        #detail-status {
-            width: auto;
-        }
-        
-        .detail-section {
-            height: auto;
-            margin-bottom: 1;
-            padding: 1;
-            background: $surface;
-        }
-        
-        .detail-label {
-            color: $text-muted;
-            margin-bottom: 0;
-        }
-        
-        .detail-value {
-            text-style: bold;
-        }
-        
-        #progress-section {
-            margin-top: 1;
-        }
-        
-        #cancel-btn {
-            margin-top: 1;
-        }
+        #detail-header { height: auto; margin-bottom: 1; }
+        #detail-title { text-style: bold; width: 1fr; }
+        #detail-status { width: auto; }
+        .detail-section { height: auto; margin-bottom: 1; padding: 1; background: $surface; }
+        .detail-label { color: $text-muted; margin-bottom: 0; }
+        .detail-value { text-style: bold; }
+        #progress-section { margin-top: 1; }
+        #cancel-btn { margin-top: 1; }
     }
     """
 
@@ -107,56 +76,29 @@ class TaskDetail(containers.VerticalGroup):
             yield Label("Progress", classes="detail-label")
             yield ProgressBar(total=100, show_eta=False, id="detail-progress-bar")
             yield Label("", id="detail-progress-text")
-        yield Button(
-            "Cancel Backup",
-            id="cancel-btn",
-            variant="error",
-            disabled=True,
-            tooltip="Cancel this backup task",
-        )
+        yield Button("Cancel Backup", id="cancel-btn", variant="error", disabled=True, tooltip="Cancel this backup task")
 
     def on_mount(self) -> None:
         self.add_class("hidden")
 
     def update_task(self, task: Optional[dict]) -> None:
-        """Update displayed task details."""
         if not task:
             self.add_class("hidden")
             return
 
         self.remove_class("hidden")
-        
         status = task.get("status", "")
-        status_text = STATUS_STYLES.get(status, status)
         
         self.query_one("#detail-id", Label).update(task.get("backupId", "")[:16] + "...")
-        self.query_one("#detail-status", Label).update(status_text)
+        self.query_one("#detail-status", Label).update(STATUS_STYLES.get(status, status))
         self.query_one("#detail-type", Label).update(task.get("type", ""))
         self.query_one("#detail-source", Label).update(task.get("source", ""))
         self.query_one("#detail-target", Label).update(task.get("target", ""))
 
-        completed = task.get("sizeCompleted", 0) or 0
-        total = task.get("sizeTotal", 0) or 0
-        if total > 0:
-            percent = (completed / total) * 100
-            self.query_one("#detail-progress-bar", ProgressBar).progress = percent
-            self.query_one("#detail-progress-text", Label).update(
-                f"{self._format_bytes(completed)} / {self._format_bytes(total)} ({percent:.1f}%)"
-            )
-        else:
-            self.query_one("#detail-progress-bar", ProgressBar).progress = 0
-            self.query_one("#detail-progress-text", Label).update("0 bytes")
-
-        can_cancel = status in {"PENDING", "IN_PROGRESS"}
-        self.query_one("#cancel-btn", Button).disabled = not can_cancel
-
-    def _format_bytes(self, size: int) -> str:
-        """Format bytes to human readable string."""
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TB"
+        completed, total = task.get("sizeCompleted", 0) or 0, task.get("sizeTotal", 0) or 0
+        self.query_one("#detail-progress-bar", ProgressBar).progress = calc_percent(completed, total)
+        self.query_one("#detail-progress-text", Label).update(fmt_progress(completed, total))
+        self.query_one("#cancel-btn", Button).disabled = status not in {"PENDING", "IN_PROGRESS"}
 
 
 class TasksScreen(PageScreen):
@@ -174,48 +116,21 @@ class TasksScreen(PageScreen):
             overflow-y: auto;
             scrollbar-gutter: stable;
         }
-        
-        Markdown {
-            background: transparent;
-            margin: 0;
-            padding: 0;
-        }
-        
-        #controls {
-            height: auto;
-            margin: 1 0;
-        }
-        
-        #refresh-btn {
-            margin-right: 1;
-        }
-        
-        #task-count {
-            width: 1fr;
-            text-align: right;
-            color: $text-muted;
-        }
-        
-        DataTable {
-            height: 14;
-            margin: 1 0;
-            background: $surface;
-        }
-        
-        Rule {
-            margin: 1 0;
-        }
+        Markdown { background: transparent; margin: 0; padding: 0; }
+        #controls { height: auto; margin: 1 0; }
+        #refresh-btn { margin-right: 1; }
+        #task-count { width: 1fr; text-align: right; color: $text-muted; }
+        DataTable { height: 14; margin: 1 0; background: $surface; }
+        Rule { margin: 1 0; }
     }
     """
 
-    BINDINGS = [
-        Binding("r", "refresh", "Refresh", tooltip="Refresh task list"),
-    ]
+    BINDINGS = [Binding("r", "refresh", "Refresh", tooltip="Refresh task list")]
 
     def __init__(self) -> None:
         super().__init__()
-        self._tasks_subscription: Optional[asyncio.Task] = None
-        self._progress_subs: dict[str, asyncio.Task] = {}
+        self._tasks_sub: Optional[asyncio.Task] = None
+        self._progress_mgr: Optional[ProgressSubscriptionManager] = None
         self._tasks: list[dict] = []
         self._selected_task: Optional[dict] = None
 
@@ -223,12 +138,7 @@ class TasksScreen(PageScreen):
         with containers.VerticalScroll(id="content"):
             yield Markdown(TASKS_MD)
             with containers.HorizontalGroup(id="controls"):
-                yield Button(
-                    "↻ Refresh",
-                    id="refresh-btn",
-                    variant="primary",
-                    tooltip="Refresh task list",
-                )
+                yield Button("↻ Refresh", id="refresh-btn", variant="primary", tooltip="Refresh task list")
                 yield Label("", id="task-count")
             yield DataTable(id="tasks-table", cursor_type="row", zebra_stripes=True)
             yield Rule()
@@ -236,77 +146,43 @@ class TasksScreen(PageScreen):
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one("#tasks-table", DataTable)
-        table.add_columns("Status", "Type", "Source", "Target", "Progress")
-        self._tasks_subscription = asyncio.create_task(self._subscribe_tasks())
+        self._progress_mgr = ProgressSubscriptionManager(
+            lambda: self.app.client,
+            self._on_progress_update
+        )
+        self.query_one("#tasks-table", DataTable).add_columns("Status", "Type", "Source", "Target", "Progress")
+        self._tasks_sub = asyncio.create_task(self._subscribe_tasks())
 
     def on_unmount(self) -> None:
-        if self._tasks_subscription:
-            self._tasks_subscription.cancel()
-        for sub in self._progress_subs.values():
-            sub.cancel()
+        if self._tasks_sub:
+            self._tasks_sub.cancel()
+        if self._progress_mgr:
+            self._progress_mgr.cancel_all()
+
+    def _on_progress_update(self, backup_id: str, completed: int, total: int) -> None:
+        for task in self._tasks:
+            if task.get("backupId") == backup_id:
+                task["sizeCompleted"], task["sizeTotal"] = completed, total
+                break
+        self._update_table()
+        if self._selected_task and self._selected_task.get("backupId") == backup_id:
+            self._selected_task["sizeCompleted"], self._selected_task["sizeTotal"] = completed, total
+            self.query_one(TaskDetail).update_task(self._selected_task)
 
     async def _subscribe_tasks(self) -> None:
-        """Subscribe to task list updates with retry."""
-        query = """subscription { backupTasksUpdated {
-            backupId status type source target sizeCompleted sizeTotal
-        }}"""
+        query = """subscription { backupTasksUpdated { backupId status type source target sizeCompleted sizeTotal }}"""
         while True:
             try:
                 async for payload in self.app.client.subscribe(query):
                     self._tasks = payload.get("backupTasksUpdated", [])
                     self._update_table()
                     self._update_task_count()
-                    self._sync_progress_subscriptions()
+                    self._progress_mgr.sync(self._tasks)
             except asyncio.CancelledError:
                 return
             except Exception as e:
                 logger.warning("Tasks subscription error: %s, retrying...", e)
                 await asyncio.sleep(1)
-
-    def _sync_progress_subscriptions(self) -> None:
-        """Start/stop progress subscriptions for active tasks."""
-        active_ids = {t["backupId"] for t in self._tasks if t.get("status") == "IN_PROGRESS"}
-
-        # Stop subscriptions for tasks no longer active
-        for backup_id in list(self._progress_subs.keys()):
-            if backup_id not in active_ids:
-                self._progress_subs.pop(backup_id).cancel()
-
-        # Start subscriptions for new active tasks
-        for backup_id in active_ids:
-            if backup_id not in self._progress_subs:
-                self._progress_subs[backup_id] = asyncio.create_task(
-                    self._subscribe_progress(backup_id)
-                )
-
-    async def _subscribe_progress(self, backup_id: str) -> None:
-        """Subscribe to progress updates for a specific task."""
-        query = """subscription($id: ID!) { progress(backupId: $id) { sizeCompleted sizeTotal }}"""
-        try:
-            async for payload in self.app.client.subscribe(query, variable_values={"id": backup_id}):
-                progress = payload.get("progress", {})
-                self._update_task_progress(backup_id, progress)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning("Progress subscription error for %s: %s", backup_id, e)
-        finally:
-            self._progress_subs.pop(backup_id, None)
-
-    def _update_task_progress(self, backup_id: str, progress: dict) -> None:
-        """Update a task's progress in the list and refresh UI."""
-        for task in self._tasks:
-            if task.get("backupId") == backup_id:
-                task["sizeCompleted"] = progress.get("sizeCompleted", 0)
-                task["sizeTotal"] = progress.get("sizeTotal", 0)
-                break
-        self._update_table()
-        # Also update detail panel if this task is selected
-        if self._selected_task and self._selected_task.get("backupId") == backup_id:
-            self._selected_task["sizeCompleted"] = progress.get("sizeCompleted", 0)
-            self._selected_task["sizeTotal"] = progress.get("sizeTotal", 0)
-            self.query_one(TaskDetail).update_task(self._selected_task)
 
     def _update_task_count(self) -> None:
         active = sum(1 for t in self._tasks if t.get("status") in {"PENDING", "IN_PROGRESS"})
@@ -314,10 +190,7 @@ class TasksScreen(PageScreen):
         self.query_one("#task-count", Label).update(text)
 
     async def _refresh_data(self) -> None:
-        """Fetch task list manually (for manual refresh button)."""
-        query = """query { backupTasks(limit: 50) {
-            backupId status type source target sizeCompleted sizeTotal
-        }}"""
+        query = """query { backupTasks(limit: 50) { backupId status type source target sizeCompleted sizeTotal }}"""
         try:
             result = await self.app.client.execute(query)
             self._tasks = result.get("backupTasks", [])
@@ -327,7 +200,6 @@ class TasksScreen(PageScreen):
             logger.warning("Failed to fetch tasks: %s", e)
 
     def _update_table(self) -> None:
-        """Update the data table with current tasks."""
         table = self.query_one("#tasks-table", DataTable)
         selected_id = self._selected_task.get("backupId") if self._selected_task else None
         previous_index = table.cursor_row if table.row_count else None
@@ -335,32 +207,21 @@ class TasksScreen(PageScreen):
 
         for task in self._tasks:
             status = task.get("status", "")
-            status_display = STATUS_STYLES.get(status, status)
-            task_type = f"[cyan]{task.get('type', '')}[/cyan]"
+            completed, total = task.get("sizeCompleted", 0) or 0, task.get("sizeTotal", 0) or 0
             
-            source = task.get("source", "")
-            target = task.get("target", "")
-            
-            # Truncate long paths
-            if len(source) > 28:
-                source = "..." + source[-25:]
-            if len(target) > 28:
-                target = "..." + target[-25:]
-
-            completed = task.get("sizeCompleted", 0) or 0
-            total = task.get("sizeTotal", 0) or 0
             if total > 0:
-                percent = (completed / total) * 100
-                if percent >= 100:
-                    progress = "[green]100%[/green]"
-                elif percent > 0:
-                    progress = f"[yellow]{percent:.0f}%[/yellow]"
-                else:
-                    progress = "[dim]0%[/dim]"
+                pct = (completed / total) * 100
+                progress = "[green]100%[/green]" if pct >= 100 else f"[yellow]{pct:.0f}%[/yellow]" if pct > 0 else "[dim]0%[/dim]"
             else:
                 progress = "[dim]—[/dim]"
 
-            table.add_row(status_display, task_type, source, target, progress)
+            table.add_row(
+                STATUS_STYLES.get(status, status),
+                f"[cyan]{task.get('type', '')}[/cyan]",
+                shorten_path(task.get("source", "")),
+                shorten_path(task.get("target", "")),
+                progress
+            )
 
         if not self._tasks:
             self._set_selected_task(None)
@@ -371,14 +232,9 @@ class TasksScreen(PageScreen):
 
         target_index = None
         if selected_id:
-            target_index = next(
-                (idx for idx, task in enumerate(self._tasks) if task.get("backupId") == selected_id),
-                None,
-            )
-
+            target_index = next((i for i, t in enumerate(self._tasks) if t.get("backupId") == selected_id), None)
         if target_index is None and previous_index is not None:
             target_index = min(previous_index, len(self._tasks) - 1)
-
         if target_index is None:
             self._set_selected_task(None)
             return
@@ -390,68 +246,54 @@ class TasksScreen(PageScreen):
         self._selected_task = task
         self.query_one(TaskDetail).update_task(task)
 
-    def _update_selected_task_from_row_key(self, row_key) -> None:
-        table = self.query_one("#tasks-table", DataTable)
+    def _update_selected_from_row(self, row_key) -> None:
         if not row_key:
             self._set_selected_task(None)
             return
-
         try:
-            row_index = table.get_row_index(row_key)
+            idx = self.query_one("#tasks-table", DataTable).get_row_index(row_key)
+            self._set_selected_task(self._tasks[idx] if 0 <= idx < len(self._tasks) else None)
         except KeyError:
-            row_index = -1
-
-        task = self._tasks[row_index] if 0 <= row_index < len(self._tasks) else None
-        self._set_selected_task(task)
+            self._set_selected_task(None)
 
     @on(DataTable.RowHighlighted)
     def on_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        """Update task details whenever the highlight moves."""
-        self._update_selected_task_from_row_key(event.row_key)
+        self._update_selected_from_row(event.row_key)
 
     @on(DataTable.RowSelected)
     def on_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle row selection in the tasks table (e.g. Enter key)."""
-        self._update_selected_task_from_row_key(event.row_key)
+        self._update_selected_from_row(event.row_key)
 
     @on(Button.Pressed, "#refresh-btn")
     async def on_refresh_pressed(self) -> None:
-        """Handle refresh button press."""
-        await self._run_manual_refresh()
+        await self._refresh_data()
+        self.notify("Task list refreshed", severity="information")
 
     @on(Button.Pressed, "#cancel-btn")
     async def on_cancel_pressed(self) -> None:
-        """Handle cancel button press."""
         if not self._selected_task:
             return
-
         backup_id = self._selected_task.get("backupId")
         if not backup_id:
             return
 
-        client = self.app.client
-        mutation = """
-        mutation CancelBackup($id: ID!) {
-            cancelBackup(backupId: $id)
-        }
-        """
         try:
-            result = await client.execute(mutation, variable_values={"id": backup_id})
+            result = await self.app.client.execute(
+                "mutation($id: ID!) { cancelBackup(backupId: $id) }",
+                variable_values={"id": backup_id}
+            )
             if result.get("cancelBackup"):
                 self.notify(f"Cancelled backup {backup_id[:8]}", title="Success")
-                self._selected_task = None
-                self.query_one(TaskDetail).update_task(None)
+                self._set_selected_task(None)
             else:
                 self.notify("Could not cancel backup", severity="warning")
         except Exception as e:
             self.notify(f"Error: {e}", severity="error")
-
         await self._refresh_data()
 
     def action_refresh(self) -> None:
-        """Action to refresh task list."""
-        asyncio.create_task(self._run_manual_refresh())
+        asyncio.create_task(self._run_refresh())
 
-    async def _run_manual_refresh(self) -> None:
+    async def _run_refresh(self) -> None:
         await self._refresh_data()
         self.notify("Task list refreshed", severity="information")
