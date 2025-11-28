@@ -255,9 +255,10 @@ class BackupManager:
 
     async def resolve_target_path(self, device: pyudev.Device, source_path: str, template: str) -> str:
         uuid_value = device.get("ID_FS_UUID", "unknown")
-        return await asyncio.to_thread(self._resolve_target_path_sync, uuid_value, source_path, template)
+        fs_label = device.get("ID_FS_LABEL_ENC", "")
+        return await asyncio.to_thread(self._resolve_target_path_sync, uuid_value, fs_label, source_path, template)
 
-    def _resolve_target_path_sync(self, uuid_value: str, source_path: str, template: str) -> str:
+    def _resolve_target_path_sync(self, uuid_value: str, fs_label: str, source_path: str, template: str) -> str:
         uuid_short = uuid_value[:4] if len(uuid_value) >= 4 else uuid_value
         earliest_mtime = None
         try:
@@ -287,6 +288,7 @@ class BackupManager:
             minute=minute_str,
             uuid=uuid_value,
             uuid_short=uuid_short,
+            fs_label=fs_label,
         )
         return os.path.expanduser(target_path)
 

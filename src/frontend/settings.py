@@ -40,6 +40,7 @@ earliest file modification time found on the SD card (or current time if empty).
 | `{minute}` | Minute (MM) | 30 |
 | `{uuid}` | Full partition UUID | 1234-ABCD |
 | `{uuid_short}` | First 4 chars of UUID | 1234 |
+| `{fs_label}` | Filesystem label | SD_CARD |
 
 **Example:** `~/sd-backups/{date}-{uuid_short}` → `~/sd-backups/20240115-1234`
 """
@@ -157,6 +158,7 @@ class TargetTemplateForm(containers.VerticalGroup):
         preview = preview.replace("{minute}", "30")
         preview = preview.replace("{uuid}", "1234-ABCD")
         preview = preview.replace("{uuid_short}", "1234")
+        preview = preview.replace("{fs_label}", "SD_CARD")
         self.query_one("#preview-value", Label).update(f"[cyan]{preview}[/cyan]")
 
 
