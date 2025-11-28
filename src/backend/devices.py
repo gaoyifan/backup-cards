@@ -86,6 +86,16 @@ def list_available_devices() -> List[DeviceInfo]:
     return devices
 
 
+def get_device_by_path(device_path: str) -> Optional[pyudev.Device]:
+    """Get a pyudev Device object from a device path like /dev/sda1."""
+    context = pyudev.Context()
+    try:
+        return pyudev.Devices.from_device_file(context, device_path)
+    except (pyudev.DeviceNotFoundByFileError, ValueError) as exc:
+        logger.warning("Device not found for path %s: %s", device_path, exc)
+        return None
+
+
 def _current_mounts() -> Dict[str, str]:
     mounts: Dict[str, str] = {}
     try:

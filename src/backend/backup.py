@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from backend.config import get_config
 from backend.db import BackupTaskRecord, session_scope
+from backend.devices import get_device_by_path
 from backend.models import BackupStatus, BackupTaskDTO, BackupType
 from backend.rsync_parser import RsyncOutputParser
 
@@ -135,19 +136,22 @@ class BackupManager:
     # Public API used by GraphQL
     # ------------------------------------------------------------------ #
     async def start_manual_backup(self, source: str, target: str) -> str:
-        source_path = Path(source).expanduser().resolve()
         target_path = Path(target).expanduser().resolve()
 
-        logger.info("Starting manual backup from %s to %s", source_path, target_path)
+        # Device path (e.g., /dev/sda1)
+        if source.startswith("/dev/"):
+            device = get_device_by_path(source)
+            if device is None:
+                raise ValueError(f"Device not found: {source}")
+            mount_point = await self.mount_device(device)
+            return await self._backup_from_mount(mount_point, target_path, BackupType.MANUAL)
 
+        # Regular directory/file backup
+        source_path = Path(source).expanduser().resolve()
         if not source_path.exists():
-            logger.info("Source path %s does not exist.", source_path)
             raise FileNotFoundError(f"Source path {source_path} does not exist.")
-
         return await self._enqueue_backup(
-            source=source_path,
-            target=target_path,
-            backup_type=BackupType.MANUAL,
+            source=source_path, target=target_path, backup_type=BackupType.MANUAL,
         )
 
     async def cancel_backup(self, backup_id: str) -> bool:
@@ -207,19 +211,19 @@ class BackupManager:
         if not config.auto_backup_enabled:
             logger.info("Auto backup disabled. Ignoring %s", device.device_node)
             return None
-
         mount_point = await self.mount_device(device)
         target_path = await self.resolve_target_path(device, mount_point, config.auto_backup_target_path)
+        return await self._backup_from_mount(mount_point, Path(target_path), BackupType.AUTO)
 
-        async def cleanup(_: BackupStatus) -> None:
-            await self._unmount_path(mount_point)
-
+    async def _backup_from_mount(
+        self, mount_point: str, target: Path, backup_type: BackupType,
+    ) -> str:
+        """Shared device backup logic: backup from mount point with unmount cleanup."""
+        cleanup = lambda _: self._unmount_path(mount_point)
         try:
             return await self._enqueue_backup(
-                source=Path(mount_point),
-                target=Path(target_path),
-                backup_type=BackupType.AUTO,
-                cleanup=cleanup,
+                source=Path(mount_point), target=target,
+                backup_type=backup_type, cleanup=cleanup,
             )
         except Exception:
             await cleanup(BackupStatus.FAILED)
