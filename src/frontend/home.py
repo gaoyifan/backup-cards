@@ -378,43 +378,54 @@ class HomeScreen(PageScreen):
             sub.cancel()
 
     async def _load_config(self) -> None:
-        """Load config (no subscription available for config)."""
-        try:
-            result = await self.app.client.execute(
-                "query { config { autoBackupEnabled } }"
-            )
-            self.query_one(QuickStats).auto_backup = result.get("config", {}).get(
-                "autoBackupEnabled", False
-            )
-        except Exception as e:
-            logger.warning("Failed to load config: %s", e)
+        """Load config with retry (no subscription available for config)."""
+        for attempt in range(10):
+            try:
+                result = await self.app.client.execute(
+                    "query { config { autoBackupEnabled } }"
+                )
+                self.query_one(QuickStats).auto_backup = result.get("config", {}).get(
+                    "autoBackupEnabled", False
+                )
+                return
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                if attempt < 9:
+                    await asyncio.sleep(0.5)
+                else:
+                    logger.warning("Failed to load config: %s", e)
 
     async def _subscribe_tasks(self) -> None:
-        """Subscribe to task list updates."""
+        """Subscribe to task list updates with retry."""
         query = """subscription { backupTasksUpdated {
             backupId status sizeCompleted sizeTotal source target
         }}"""
-        try:
-            async for payload in self.app.client.subscribe(query):
-                tasks = payload.get("backupTasksUpdated", [])
-                self._update_from_tasks(tasks)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning("Tasks subscription error: %s", e)
+        while True:
+            try:
+                async for payload in self.app.client.subscribe(query):
+                    tasks = payload.get("backupTasksUpdated", [])
+                    self._update_from_tasks(tasks)
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.warning("Tasks subscription error: %s, retrying...", e)
+                await asyncio.sleep(1)
 
     async def _subscribe_devices(self) -> None:
-        """Subscribe to device list updates."""
+        """Subscribe to device list updates with retry."""
         query = """subscription { devicesUpdated { devicePath mountPoint }}"""
-        try:
-            async for payload in self.app.client.subscribe(query):
-                devices = payload.get("devicesUpdated", [])
-                self.query_one(QuickStats).devices_count = len(devices)
-                self.query_one(DeviceList).update_devices(devices)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning("Devices subscription error: %s", e)
+        while True:
+            try:
+                async for payload in self.app.client.subscribe(query):
+                    devices = payload.get("devicesUpdated", [])
+                    self.query_one(QuickStats).devices_count = len(devices)
+                    self.query_one(DeviceList).update_devices(devices)
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.warning("Devices subscription error: %s, retrying...", e)
+                await asyncio.sleep(1)
 
     def _update_from_tasks(self, tasks: list[dict]) -> None:
         """Update UI from task list."""

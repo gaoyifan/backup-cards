@@ -247,20 +247,22 @@ class TasksScreen(PageScreen):
             sub.cancel()
 
     async def _subscribe_tasks(self) -> None:
-        """Subscribe to task list updates."""
+        """Subscribe to task list updates with retry."""
         query = """subscription { backupTasksUpdated {
             backupId status type source target sizeCompleted sizeTotal
         }}"""
-        try:
-            async for payload in self.app.client.subscribe(query):
-                self._tasks = payload.get("backupTasksUpdated", [])
-                self._update_table()
-                self._update_task_count()
-                self._sync_progress_subscriptions()
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning("Tasks subscription error: %s", e)
+        while True:
+            try:
+                async for payload in self.app.client.subscribe(query):
+                    self._tasks = payload.get("backupTasksUpdated", [])
+                    self._update_table()
+                    self._update_task_count()
+                    self._sync_progress_subscriptions()
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.warning("Tasks subscription error: %s, retrying...", e)
+                await asyncio.sleep(1)
 
     def _sync_progress_subscriptions(self) -> None:
         """Start/stop progress subscriptions for active tasks."""
