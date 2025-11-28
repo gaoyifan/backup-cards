@@ -363,6 +363,7 @@ class BackupManager:
             "rsync",
             "-a",
             "--stats",
+            "--bwlimit=3m",
             "--info=progress2",
             source_arg,
             target_arg,
