@@ -89,66 +89,137 @@ class QuickStats(containers.HorizontalGroup):
             label.update("0")
 
 
-class ActiveBackupPanel(containers.VerticalGroup):
-    """Shows active backup progress."""
+class ActiveTaskCard(containers.VerticalGroup):
+    """Shows a single active task with progress."""
 
     DEFAULT_CSS = """
-    ActiveBackupPanel {
+    ActiveTaskCard {
         height: auto;
         padding: 1 2;
-        background: $boost;
-        margin: 1 0;
-        border: wide $accent 50%;
+        background: $surface;
+        margin: 0 0 1 0;
+        border-left: thick $accent;
         
-        #backup-title {
-            text-style: bold;
-            margin-bottom: 1;
+        .task-header {
+            height: auto;
         }
         
-        #backup-info {
-            margin-bottom: 1;
+        .task-id {
+            color: $text-muted;
+            text-style: italic;
         }
         
-        #progress-text {
+        .task-path {
+            margin: 0 0 1 0;
+        }
+        
+        .progress-text {
             text-align: right;
             color: $text-muted;
-            margin-top: 0;
         }
         
         ProgressBar {
             padding: 0;
             margin: 0;
         }
+    }
+    """
+
+    def __init__(self, backup_id: str, source: str, target: str) -> None:
+        super().__init__()
+        self.backup_id = backup_id
+        self.source = source
+        self.target = target
+
+    def compose(self) -> ComposeResult:
+        with containers.HorizontalGroup(classes="task-header"):
+            yield Label(f"📦 {self.backup_id[:8]}...", classes="task-id")
+        yield Label(f"{self._shorten(self.source)} → {self._shorten(self.target)}", classes="task-path")
+        yield ProgressBar(total=100, show_eta=False, id=f"progress-{self.backup_id}")
+        yield Label("0%", id=f"text-{self.backup_id}", classes="progress-text")
+
+    def _shorten(self, path: str, max_len: int = 30) -> str:
+        return path if len(path) <= max_len else f"...{path[-(max_len - 3):]}"
+
+    def update_progress(self, completed: int, total: int) -> None:
+        percent = (completed / total) * 100 if total > 0 else 0
+        self.query_one(f"#progress-{self.backup_id}", ProgressBar).progress = percent
+        self.query_one(f"#text-{self.backup_id}", Label).update(
+            f"{self._fmt_bytes(completed)} / {self._fmt_bytes(total)} ({percent:.1f}%)"
+        )
+
+    def _fmt_bytes(self, size: int) -> str:
+        for unit in ("B", "KB", "MB", "GB"):
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} TB"
+
+
+class ActiveTasksList(containers.VerticalGroup):
+    """Container for all active tasks."""
+
+    DEFAULT_CSS = """
+    ActiveTasksList {
+        height: auto;
+        padding: 1 2;
+        background: $boost;
+        margin: 1 0;
         
-        &.hidden {
-            display: none;
+        &.hidden { display: none; }
+        
+        #active-title {
+            text-style: bold;
+            margin-bottom: 1;
+        }
+        
+        #no-active {
+            color: $text-muted;
+            text-style: italic;
+        }
+        
+        #active-container {
+            height: auto;
         }
     }
     """
 
-    backup_id: reactive[Optional[str]] = reactive(None)
-    transfer_text: reactive[str] = reactive("")
-    progress: reactive[float] = reactive(0.0)
-    progress_text: reactive[str] = reactive("")
-
     def compose(self) -> ComposeResult:
-        yield Label("📦 Active Backup", id="backup-title")
-        yield Label("", id="backup-info")
-        yield ProgressBar(total=100, show_eta=False, id="progress-bar")
-        yield Label("", id="progress-text")
+        yield Label("📦 Active Tasks", id="active-title")
+        yield containers.VerticalGroup(id="active-container")
 
-    def watch_backup_id(self, value: Optional[str]) -> None:
-        self.set_class(value is None, "hidden")
+    def update_tasks(self, tasks: list[dict]) -> None:
+        """Update the list of active tasks."""
+        container = self.query_one("#active-container", containers.VerticalGroup)
+        container.remove_children()
 
-    def watch_transfer_text(self, value: str) -> None:
-        self.query_one("#backup-info", Label).update(value)
+        active = [t for t in tasks if t.get("status") in {"PENDING", "IN_PROGRESS"}]
+        
+        if not active:
+            self.add_class("hidden")
+            return
 
-    def watch_progress(self, value: float) -> None:
-        bar = self.query_one("#progress-bar", ProgressBar)
-        bar.progress = value
+        self.remove_class("hidden")
+        for task in active:
+            card = ActiveTaskCard(
+                task.get("backupId", ""),
+                task.get("source", ""),
+                task.get("target", ""),
+            )
+            container.mount(card)
+            # Set initial progress
+            completed = task.get("sizeCompleted", 0) or 0
+            total = task.get("sizeTotal", 0) or 0
+            card.update_progress(completed, total)
 
-    def watch_progress_text(self, value: str) -> None:
-        self.query_one("#progress-text", Label).update(value)
+    def update_progress(self, backup_id: str, completed: int, total: int) -> None:
+        """Update progress for a specific task."""
+        try:
+            card = self.query_one(f"#progress-{backup_id}", ProgressBar).parent
+            if isinstance(card, ActiveTaskCard):
+                card.update_progress(completed, total)
+        except Exception:
+            pass  # Card may not exist yet
 
 
 class DeviceCard(containers.HorizontalGroup):
@@ -282,15 +353,14 @@ class HomeScreen(PageScreen):
         super().__init__()
         self._tasks_sub: Optional[asyncio.Task] = None
         self._devices_sub: Optional[asyncio.Task] = None
-        self._progress_sub: Optional[asyncio.Task] = None
-        self._active_backup_id: Optional[str] = None
+        self._progress_subs: dict[str, asyncio.Task] = {}
 
     def compose(self) -> ComposeResult:
         with containers.VerticalScroll(id="content"):
             yield Markdown(WELCOME_MD)
             yield QuickStats()
             yield Rule()
-            yield ActiveBackupPanel()
+            yield ActiveTasksList()
             yield DeviceList()
         yield Footer()
 
@@ -301,9 +371,11 @@ class HomeScreen(PageScreen):
         self._devices_sub = asyncio.create_task(self._subscribe_devices())
 
     def on_unmount(self) -> None:
-        for task in (self._tasks_sub, self._devices_sub, self._progress_sub):
+        for task in (self._tasks_sub, self._devices_sub):
             if task:
                 task.cancel()
+        for sub in self._progress_subs.values():
+            sub.cancel()
 
     async def _load_config(self) -> None:
         """Load config (no subscription available for config)."""
@@ -324,7 +396,8 @@ class HomeScreen(PageScreen):
         }}"""
         try:
             async for payload in self.app.client.subscribe(query):
-                await self._update_from_tasks(payload.get("backupTasksUpdated", []))
+                tasks = payload.get("backupTasksUpdated", [])
+                self._update_from_tasks(tasks)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -343,59 +416,43 @@ class HomeScreen(PageScreen):
         except Exception as e:
             logger.warning("Devices subscription error: %s", e)
 
-    async def _update_from_tasks(self, tasks: list[dict]) -> None:
+    def _update_from_tasks(self, tasks: list[dict]) -> None:
         """Update UI from task list."""
         active_statuses = {"PENDING", "IN_PROGRESS"}
-        active = next((t for t in tasks if t.get("status") in active_statuses), None)
-        active_id = active.get("backupId") if active else None
+        active_count = sum(1 for t in tasks if t.get("status") in active_statuses)
 
-        self.query_one(QuickStats).active_tasks = sum(
-            1 for t in tasks if t.get("status") in active_statuses
-        )
+        self.query_one(QuickStats).active_tasks = active_count
+        self.query_one(ActiveTasksList).update_tasks(tasks)
+        self._sync_progress_subscriptions(tasks)
 
-        panel = self.query_one(ActiveBackupPanel)
-        panel.backup_id = active_id
-        if active:
-            src, tgt = active.get("source", ""), active.get("target", "")
-            panel.transfer_text = f"{self._shorten(src)} -> {self._shorten(tgt)}"
-            self._update_progress(panel, active.get("sizeCompleted"), active.get("sizeTotal"))
-        else:
-            panel.transfer_text = ""
+    def _sync_progress_subscriptions(self, tasks: list[dict]) -> None:
+        """Start/stop progress subscriptions for active tasks."""
+        active_ids = {t["backupId"] for t in tasks if t.get("status") == "IN_PROGRESS"}
 
-        if active_id != self._active_backup_id:
-            self._active_backup_id = active_id
-            if self._progress_sub:
-                self._progress_sub.cancel()
-                with suppress(asyncio.CancelledError):
-                    await self._progress_sub
-            if active_id:
-                self._progress_sub = asyncio.create_task(self._subscribe_progress(active_id))
+        # Stop subscriptions for tasks no longer active
+        for backup_id in list(self._progress_subs.keys()):
+            if backup_id not in active_ids:
+                self._progress_subs.pop(backup_id).cancel()
 
-    def _update_progress(self, panel: ActiveBackupPanel, completed: int | None, total: int | None) -> None:
-        completed, total = completed or 0, total or 1
-        percent = (completed / total) * 100 if total > 0 else 0
-        panel.progress = percent
-        panel.progress_text = f"{self._fmt_bytes(completed)} / {self._fmt_bytes(total)} ({percent:.1f}%)"
-
-    def _fmt_bytes(self, size: int) -> str:
-        for unit in ("B", "KB", "MB", "GB"):
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TB"
-
-    def _shorten(self, path: str, max_len: int = 32) -> str:
-        return path if len(path) <= max_len else f"...{path[-(max_len - 3):]}"
+        # Start subscriptions for new active tasks
+        for backup_id in active_ids:
+            if backup_id not in self._progress_subs:
+                self._progress_subs[backup_id] = asyncio.create_task(
+                    self._subscribe_progress(backup_id)
+                )
 
     async def _subscribe_progress(self, backup_id: str) -> None:
-        """Subscribe to progress updates for active backup."""
+        """Subscribe to progress updates for an active task."""
         query = """subscription($id: ID!) { progress(backupId: $id) { sizeCompleted sizeTotal }}"""
-        panel = self.query_one(ActiveBackupPanel)
         try:
             async for payload in self.app.client.subscribe(query, variable_values={"id": backup_id}):
                 p = payload.get("progress", {})
-                self._update_progress(panel, p.get("sizeCompleted"), p.get("sizeTotal"))
+                self.query_one(ActiveTasksList).update_progress(
+                    backup_id, p.get("sizeCompleted", 0), p.get("sizeTotal", 0)
+                )
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.warning("Progress subscription error: %s", e)
+        finally:
+            self._progress_subs.pop(backup_id, None)
