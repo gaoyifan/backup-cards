@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from textual import containers, on
+from textual import containers, events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.validation import Length
 from textual.widgets import Button, Footer, Input, Label, Markdown, Select, Rule
 
 from frontend.page import PageScreen
+from frontend.path_hints import PathHintBox, PathHintManager
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,7 @@ class BackupForm(containers.VerticalGroup):
                 id="source-input",
                 validators=[Length(minimum=1)],
             )
+            yield PathHintBox(id="source-hints", classes="hidden")
         with containers.VerticalGroup(classes="form-field"):
             yield Label("Target Path", classes="field-label")
             yield Label("Where to save the backup", classes="field-hint")
@@ -165,6 +167,7 @@ class BackupForm(containers.VerticalGroup):
                 id="target-input",
                 validators=[Length(minimum=1)],
             )
+            yield PathHintBox(id="target-hints", classes="hidden")
         with containers.HorizontalGroup(id="button-row"):
             yield Button(
                 "▶ Start Backup",
@@ -217,6 +220,9 @@ class BackupScreen(PageScreen):
     def __init__(self) -> None:
         super().__init__()
         self._devices: list[dict] = []
+        self._path_hints = PathHintManager(self)
+        self._path_hints.register("source-input", "source-hints")
+        self._path_hints.register("target-input", "target-hints")
 
     def compose(self) -> ComposeResult:
         with containers.VerticalScroll(id="content"):
@@ -265,6 +271,26 @@ class BackupScreen(PageScreen):
         """Hide status message."""
         container = self.query_one("#status-container", containers.VerticalGroup)
         container.add_class("hidden")
+
+    @on(Input.Changed, "#source-input")
+    def on_source_input_changed(self, event: Input.Changed) -> None:
+        """Update hints when the source path changes."""
+        self._path_hints.handle_change("source-input", event.value)
+
+    @on(Input.Changed, "#target-input")
+    def on_target_input_changed(self, event: Input.Changed) -> None:
+        """Update hints when the target path changes."""
+        self._path_hints.handle_change("target-input", event.value)
+
+    @on(Input.Blurred, "#source-input")
+    def on_source_input_blurred(self, _: Input.Blurred) -> None:
+        """Hide hints when the source loses focus."""
+        self._path_hints.handle_blur("source-input")
+
+    @on(Input.Blurred, "#target-input")
+    def on_target_input_blurred(self, _: Input.Blurred) -> None:
+        """Hide hints when the target loses focus."""
+        self._path_hints.handle_blur("target-input")
 
     @on(Select.Changed, "#device-select")
     def on_device_selected(self, event: Select.Changed) -> None:
@@ -343,3 +369,24 @@ class BackupScreen(PageScreen):
     def action_submit(self) -> None:
         """Handle Ctrl+Enter to submit form."""
         asyncio.create_task(self._start_backup())
+
+    def on_unmount(self) -> None:
+        """Ensure background hint lookups are stopped."""
+        self._path_hints.reset()
+
+    def on_key(self, event: events.Key) -> None:
+        """Intercept Tab for quick autocompletion."""
+        focused = self.focused
+        if isinstance(focused, Input) and focused.id:
+            if event.key == "tab":
+                if self._path_hints.apply_tab_completion(focused):
+                    event.stop()
+                    return
+            elif event.key in {"up", "down"}:
+                delta = 1 if event.key == "down" else -1
+                if self._path_hints.adjust_selection(focused.id, delta):
+                    event.stop()
+                    return
+        parent_handler = getattr(super(), "on_key", None)
+        if parent_handler is not None:
+            parent_handler(event)
