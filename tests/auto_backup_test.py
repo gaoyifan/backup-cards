@@ -27,13 +27,22 @@ class TestAutoBackup(unittest.IsolatedAsyncioTestCase):
             AsyncMock(return_value="/data/backups"),
         ) as mock_resolve, patch.object(
             type(backup_manager), "_enqueue_backup", AsyncMock(return_value="abc123")
-        ) as mock_enqueue:
+        ) as mock_enqueue, patch("backend.backup.auto_backup_supported", return_value=True):
             backup_id = await backup_manager.handle_device(mock_device)
 
         mock_mount.assert_awaited_once_with(mock_device)
         mock_resolve.assert_awaited_once_with(mock_device, mount_handle.path, config.auto_backup_target_path)
         mock_enqueue.assert_awaited_once()
         self.assertEqual(backup_id, "abc123")
+
+    async def test_handle_device_skips_when_unsupported(self):
+        mock_device = MagicMock()
+        mock_device.device_node = "/dev/disk2s1"
+
+        with patch("backend.backup.auto_backup_supported", return_value=False):
+            backup_id = await backup_manager.handle_device(mock_device)
+
+        self.assertIsNone(backup_id)
 
 
 if __name__ == "__main__":

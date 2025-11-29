@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from strawberry.fastapi import GraphQLRouter
 
-from backend.monitor import DeviceMonitor
+from backend.monitor import DeviceMonitor, monitoring_supported
 from backend.schema import backup_manager, schema
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,11 @@ async def lifespan(app: FastAPI):
     # Mark stale tasks as failed from previous run
     await backup_manager.fail_stale_tasks()
     
-    monitor = DeviceMonitor(callback=device_callback)
-    await monitor.start()
+    if monitoring_supported():
+        monitor = DeviceMonitor(callback=device_callback)
+        await monitor.start()
+    else:
+        logger.info("Skipping device monitoring (unsupported platform or pyudev missing).")
     try:
         yield
     except asyncio.CancelledError:

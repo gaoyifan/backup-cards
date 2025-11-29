@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import platform
+import plistlib
+import subprocess
 from typing import AsyncIterator, Dict, List, Optional
 
+import psutil
 import pyudev
 
 from backend.models import DeviceInfo
@@ -70,6 +74,17 @@ async def publish_device_update() -> None:
 
 def list_available_devices() -> List[DeviceInfo]:
     """Return detected removable block devices."""
+    system = platform.system()
+    if system == "Darwin":
+        return _list_macos_devices()
+    if system == "Linux":
+        return _list_linux_devices()
+    logger.info("Device discovery not implemented for platform: %s", system)
+    return []
+
+
+def _list_linux_devices() -> List[DeviceInfo]:
+    """Return removable block devices on Linux."""
     context = pyudev.Context()
     mounts = _current_mounts()
     devices: List[DeviceInfo] = []
@@ -108,3 +123,47 @@ def _current_mounts() -> Dict[str, str]:
         logger.warning("Failed to read /proc/mounts: %s", exc)
     return mounts
 
+
+def _list_macos_devices() -> List[DeviceInfo]:
+    """Return removable or external devices on macOS using diskutil metadata."""
+    try:
+        partitions = psutil.disk_partitions(all=False)
+    except Exception as exc:
+        logger.warning("Failed to list macOS disk partitions: %s", exc)
+        return []
+
+    devices: List[DeviceInfo] = []
+    for partition in partitions:
+        disk_info = _diskutil_info(partition.device)
+        if not disk_info:
+            continue
+
+        is_internal = disk_info.get("Internal")
+        is_removable = disk_info.get("RemovableMedia")
+        if is_internal and not is_removable:
+            continue
+
+        mount_point = partition.mountpoint or disk_info.get("MountPoint")
+        devices.append(DeviceInfo(device_path=partition.device, mount_point=mount_point or None))
+    return devices
+
+
+def _diskutil_info(device_path: str) -> Optional[Dict]:
+    """Fetch diskutil metadata for a device path."""
+    try:
+        output = subprocess.check_output(
+            ["diskutil", "info", "-plist", device_path],
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        logger.warning("diskutil not found; cannot enumerate macOS devices.")
+        return None
+    except subprocess.CalledProcessError as exc:
+        logger.debug("diskutil info failed for %s: %s", device_path, exc)
+        return None
+
+    try:
+        return plistlib.loads(output)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Failed to parse diskutil output for %s: %s", device_path, exc)
+        return None

@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import asyncio
 import logging
+import platform
 from typing import Awaitable, Callable, Optional
 
 import pyudev
@@ -9,8 +12,15 @@ from backend.devices import is_storage_device, publish_device_update
 logger = logging.getLogger(__name__)
 
 
+def monitoring_supported() -> bool:
+    """Return True if pyudev monitoring is supported on this host."""
+    return platform.system() == "Linux"
+
+
 class DeviceMonitor:
     def __init__(self, callback: Callable[[pyudev.Device], Awaitable[None]]):
+        if not monitoring_supported():
+            raise RuntimeError("Device monitoring requires Linux with pyudev available.")
         self.context = pyudev.Context()
         self.monitor = pyudev.Monitor.from_netlink(self.context)
         self.monitor.filter_by(subsystem="block", device_type="partition")

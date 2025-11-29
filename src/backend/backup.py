@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import logging
 import os
+import platform
 import subprocess
 import uuid
 from contextlib import suppress
@@ -32,6 +33,11 @@ def check_rsync_available() -> None:
         logger.info("Found %s", version_line)
     except FileNotFoundError:
         raise RuntimeError("rsync is required but not found. Please install rsync.")
+
+
+def auto_backup_supported() -> bool:
+    """Return True if auto-backup is supported on this platform."""
+    return platform.system() == "Linux"
 
 
 class ProgressBus:
@@ -192,6 +198,9 @@ class BackupManager:
     # Auto backup entry point (used by DeviceMonitor)
     # ------------------------------------------------------------------ #
     async def handle_device(self, device: pyudev.Device) -> str | None:
+        if not auto_backup_supported():
+            logger.info("Auto backup unsupported on this platform. Ignoring %s", device.device_node)
+            return None
         config = await get_config()
         if not config.auto_backup_enabled:
             logger.info("Auto backup disabled. Ignoring %s", device.device_node)
@@ -570,4 +579,3 @@ class BackupManager:
                 except OSError:
                     continue
         return total_size
-
