@@ -32,10 +32,15 @@ The SD Backup Tool is a Python application designed to automatically back up sto
 
 #### 1. Entry Point (`main.py`)
 - Single entry point for the application implemented with Typer.
-- CLI options: `--headless`, `--listen-addr`, `--listen-port` (`0` = auto), `--log-path`, `--db-path`.
+- CLI options include:
+  - `--headless` (backend only)
+  - `--frontend-only` (connect to an existing backend when using the terminal UI)
+  - `--listen-addr` / `--listen-port` (`0` = auto)
+  - `--log-path`, `--db-path`, `--log-level`
+  - Web mode flags: `--web`, `--web-host`, `--web-port`, `--web-title`, `--web-public-url`, `--web-dev`
 - Initializes the SQLite runtime config store via `init_config_store(db_path)`.
 - Configures logging (file when `--log-path` is provided, otherwise stderr).
-- Starts FastAPI/GraphQL backend in a background thread and optionally launches the Textual UI.
+- Starts FastAPI/GraphQL backend in a background task and launches either the terminal Textual UI or the browser-based UI powered by `textual serve`.
 
 #### 2. Backend (`src/backend/`)
 
@@ -175,6 +180,15 @@ uv run python main.py
 ```bash
 uv run python main.py --headless
 ```
+
+### Web Mode (Browser UI)
+```bash
+uv run python main.py --web --web-host 0.0.0.0 --web-port 8080
+```
+
+- When `--frontend-only` is omitted, the backend starts locally and the web server proxies the Textual UI.
+- Web mode always runs the backend locally; `--web` cannot be combined with `--frontend-only`.
+- `--web-dev` enables textual devtools (the same effect as `textual serve --dev`), and `--web-public-url` controls the absolute URLs embedded in the served HTML for tunneling scenarios.
 
 ## Development
 
