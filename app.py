@@ -24,7 +24,7 @@ from backend.server import app
 from frontend.app import SDBackupApp
 
 logger = logging.getLogger(__name__)
-cli = typer.Typer(no_args_is_help=True)
+cli = typer.Typer()
 shutdown_event: asyncio.Event | None = None
 
 
@@ -70,8 +70,9 @@ async def _shutdown_backend_server(
             await backend_task
 
 
-@cli.callback()
+@cli.callback(invoke_without_command=True)
 def main_callback(
+    ctx: typer.Context,
     log_path: Optional[Path] = typer.Option(None, "--log-path", help="Path to log file"),
     log_level: str = typer.Option("INFO", "--log-level", help="Log level"),
 ) -> None:
@@ -91,6 +92,16 @@ def main_callback(
     handler.setFormatter(formatter)
     root_logger.addHandler(handler)
 
+    if ctx.invoked_subcommand is None:
+        db_path = Path.home() / ".local" / "share" / "sd-backup" / "sd-backup.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if sys.platform == "darwin":
+            ctx.invoke(cli, ["web", "--with-webview", "--db-path", str(db_path)])
+        elif sys.platform == "linux":
+            ctx.invoke(cli, ["--log-path", "/dev/null", "tui"])
+        else:
+            typer.echo("Unsupported platform", err=True)
 
 def with_shutdown_event(func):
     @functools.wraps(func)
@@ -250,4 +261,5 @@ async def daemon(
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     cli()

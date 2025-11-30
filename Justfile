@@ -1,5 +1,5 @@
 build:
-  uv run pyinstaller packaging/mac_app.py \
+  uv run pyinstaller app.py \
       --noconfirm \
       --name "SD Backup" \
       --windowed \
@@ -9,3 +9,6 @@ build:
       --hidden-import textual.drivers.web_driver \
       --collect-data textual_serve \
       --osx-bundle-identifier com.sd-backup.app
+
+clean:
+  rm -rf dist
