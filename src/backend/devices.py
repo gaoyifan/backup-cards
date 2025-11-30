@@ -23,14 +23,16 @@ def is_storage_device(device: pyudev.Device, action: Optional[str] = None) -> bo
         action: Expected device action (e.g., 'add' for new devices, None for existing).
     """
     try:
-        return all([
-            device.subsystem == "block",
-            getattr(device, "action") == action,
-            device.device_type == "partition",
-            device.get("ID_BUS") in {"usb", "mmc"},
-            device.sys_number == "1",
-            device.get("ID_FS_TYPE", "").lower() in {"exfat", "vfat", "udf"},
-        ])
+        return all(
+            [
+                device.subsystem == "block",
+                getattr(device, "action") == action,
+                device.device_type == "partition",
+                device.get("ID_BUS") in {"usb", "mmc"},
+                device.sys_number == "1",
+                device.get("ID_FS_TYPE", "").lower() in {"exfat", "vfat", "udf"},
+            ]
+        )
     except Exception as e:
         logger.error(f"Error matching device: {e}")
         return False

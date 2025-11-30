@@ -1,5 +1,4 @@
 import asyncio
-import os
 import shutil
 import socket
 import subprocess
@@ -96,9 +95,7 @@ async def run_test() -> None:
             }
             """
         )
-        result = await client.execute_async(
-            mutation, variable_values={"source": str(SOURCE_DIR), "target": str(TARGET_DIR)}
-        )
+        result = await client.execute_async(mutation, variable_values={"source": str(SOURCE_DIR), "target": str(TARGET_DIR)})
         backup_id = result["startManualBackup"]
         assert backup_id, "Mutation must return a backup id"
 

@@ -19,15 +19,17 @@ class TestAutoBackup(unittest.IsolatedAsyncioTestCase):
 
         mount_handle = MountHandle(path="/mnt/test", owned=True)
 
-        with patch("backend.backup.get_config", AsyncMock(return_value=config)), patch.object(
-            backup_manager, "mount_device", AsyncMock(return_value=mount_handle)
-        ) as mock_mount, patch.object(
-            backup_manager,
-            "resolve_target_path",
-            AsyncMock(return_value="/data/backups"),
-        ) as mock_resolve, patch.object(
-            type(backup_manager), "_enqueue_backup", AsyncMock(return_value="abc123")
-        ) as mock_enqueue, patch("backend.backup.auto_backup_supported", return_value=True):
+        with (
+            patch("backend.backup.get_config", AsyncMock(return_value=config)),
+            patch.object(backup_manager, "mount_device", AsyncMock(return_value=mount_handle)) as mock_mount,
+            patch.object(
+                backup_manager,
+                "resolve_target_path",
+                AsyncMock(return_value="/data/backups"),
+            ) as mock_resolve,
+            patch.object(type(backup_manager), "_enqueue_backup", AsyncMock(return_value="abc123")) as mock_enqueue,
+            patch("backend.backup.auto_backup_supported", return_value=True),
+        ):
             backup_id = await backup_manager.handle_device(mock_device)
 
         mock_mount.assert_awaited_once_with(mock_device)

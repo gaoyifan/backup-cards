@@ -89,7 +89,7 @@ class TaskDetail(containers.VerticalGroup):
 
         self.remove_class("hidden")
         status = task.get("status", "")
-        
+
         self.query_one("#detail-id", Label).update(task.get("backupId", "")[:16] + "...")
         self.query_one("#detail-status", Label).update(STATUS_STYLES.get(status, status))
         self.query_one("#detail-type", Label).update(task.get("type", ""))
@@ -147,10 +147,7 @@ class TasksScreen(PageScreen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._progress_mgr = ProgressSubscriptionManager(
-            lambda: self.app.client,
-            self._on_progress_update
-        )
+        self._progress_mgr = ProgressSubscriptionManager(lambda: self.app.client, self._on_progress_update)
         self.query_one("#tasks-table", DataTable).add_columns("Status", "Type", "Source", "Target", "Progress")
         self._tasks_sub = asyncio.create_task(self._subscribe_tasks())
 
@@ -209,7 +206,7 @@ class TasksScreen(PageScreen):
         for task in self._tasks:
             status = task.get("status", "")
             completed, total = task.get("sizeCompleted", 0) or 0, task.get("sizeTotal", 0) or 0
-            
+
             if total > 0:
                 pct = (completed / total) * 100
                 progress = "[green]100%[/green]" if pct >= 100 else f"[yellow]{pct:.0f}%[/yellow]" if pct > 0 else "[dim]0%[/dim]"
@@ -217,11 +214,7 @@ class TasksScreen(PageScreen):
                 progress = "[dim]—[/dim]"
 
             table.add_row(
-                STATUS_STYLES.get(status, status),
-                f"[cyan]{task.get('type', '')}[/cyan]",
-                task.get("source", ""),
-                task.get("target", ""),
-                progress
+                STATUS_STYLES.get(status, status), f"[cyan]{task.get('type', '')}[/cyan]", task.get("source", ""), task.get("target", ""), progress
             )
 
         if not self._tasks:
@@ -283,10 +276,7 @@ class TasksScreen(PageScreen):
             return
 
         try:
-            result = await self.app.client.execute(
-                "mutation($id: ID!) { cancelBackup(backupId: $id) }",
-                variable_values={"id": backup_id}
-            )
+            result = await self.app.client.execute("mutation($id: ID!) { cancelBackup(backupId: $id) }", variable_values={"id": backup_id})
             if result.get("cancelBackup"):
                 self.notify(f"Cancelled backup {backup_id[:8]}", title="Success")
                 self._set_selected_task(None)

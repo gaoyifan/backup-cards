@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from backend.db import Config as ConfigTable, create_schema, init_db, session_scope
+from backend.db import Config as ConfigTable
+from backend.db import create_schema, init_db, session_scope
 
 DEFAULT_AUTO_TEMPLATE = "~/sd-backups/{date}-{uuid_short}"
 
@@ -64,4 +65,3 @@ async def update_config(
             auto_backup_enabled=config.auto_backup_enabled,
             auto_backup_target_path=config.auto_backup_target_path,
         )
-

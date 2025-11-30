@@ -2,8 +2,8 @@ import asyncio
 import logging
 
 from gql import Client, gql
-from gql.transport.websockets import WebsocketsTransport
 from gql.transport.aiohttp import AIOHTTPTransport
+from gql.transport.websockets import WebsocketsTransport
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class GraphQLClient:
         self._http_lock = asyncio.Lock()
 
     async def execute(self, query_str, variable_values=None):
-        logger.debug("Executing GraphQL query: %s", query_str[:100].replace('\n', ' '))
+        logger.debug("Executing GraphQL query: %s", query_str[:100].replace("\n", " "))
         query = gql(query_str)
         try:
             async with self._http_lock:
@@ -31,7 +31,7 @@ class GraphQLClient:
             raise
 
     async def subscribe(self, query_str, variable_values=None):
-        logger.debug("Starting GraphQL subscription: %s", query_str[:100].replace('\n', ' '))
+        logger.debug("Starting GraphQL subscription: %s", query_str[:100].replace("\n", " "))
         query = gql(query_str)
         # Create a new transport and client for each subscription
         # This allows multiple concurrent subscriptions

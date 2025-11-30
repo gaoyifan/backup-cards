@@ -30,9 +30,7 @@ class ConfigType:
 @strawberry.input
 class ConfigInput:
     auto_backup_enabled: Optional[bool] = strawberry.field(name="autoBackupEnabled", default=None)
-    auto_backup_target_path: Optional[str] = strawberry.field(
-        name="autoBackupTargetPath", default=None
-    )
+    auto_backup_target_path: Optional[str] = strawberry.field(name="autoBackupTargetPath", default=None)
 
 
 @strawberry.type

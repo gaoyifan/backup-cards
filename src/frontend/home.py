@@ -12,7 +12,7 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Label, Markdown, ProgressBar, Rule
 
 from frontend.page import PageScreen
-from frontend.utils import ProgressSubscriptionManager, fmt_bytes, fmt_progress, shorten_path
+from frontend.utils import ProgressSubscriptionManager, fmt_progress, shorten_path
 
 logger = logging.getLogger(__name__)
 
@@ -256,8 +256,7 @@ class HomeScreen(PageScreen):
 
     def on_mount(self) -> None:
         self._progress_mgr = ProgressSubscriptionManager(
-            lambda: self.app.client,
-            lambda bid, c, t: self.query_one(ActiveTasksList).update_progress(bid, c, t)
+            lambda: self.app.client, lambda bid, c, t: self.query_one(ActiveTasksList).update_progress(bid, c, t)
         )
         asyncio.create_task(self._load_config())
         self._tasks_sub = asyncio.create_task(self._subscribe_tasks())

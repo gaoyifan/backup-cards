@@ -36,4 +36,3 @@ class BackupTaskDTO:
 class DeviceInfo:
     device_path: str
     mount_point: Optional[str]
-

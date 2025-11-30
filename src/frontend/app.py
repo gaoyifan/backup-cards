@@ -107,11 +107,7 @@ class SDBackupApp(App):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Disable switching to a mode we are already on."""
-        if (
-            action == "switch_mode"
-            and parameters
-            and self.current_mode == parameters[0]
-        ):
+        if action == "switch_mode" and parameters and self.current_mode == parameters[0]:
             return None
         return True
 

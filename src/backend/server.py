@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
     global monitor
     # Mark stale tasks as failed from previous run
     await backup_manager.fail_stale_tasks()
-    
+
     if monitoring_supported():
         monitor = DeviceMonitor(callback=device_callback)
         await monitor.start()

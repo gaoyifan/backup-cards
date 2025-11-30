@@ -17,22 +17,13 @@ class TaskStore:
         stale_values = [status.value for status in stale_statuses]
         now = datetime.datetime.utcnow()
         async with session_scope() as session:
-            stmt = (
-                update(BackupTaskRecord)
-                .where(BackupTaskRecord.status.in_(stale_values))
-                .values(status=BackupStatus.FAILED.value, finished_at=now)
-            )
+            stmt = update(BackupTaskRecord).where(BackupTaskRecord.status.in_(stale_values)).values(status=BackupStatus.FAILED.value, finished_at=now)
             result = await session.execute(stmt)
             return result.rowcount
 
     async def list(self, limit: int = 20, offset: int = 0) -> list[BackupTaskDTO]:
         async with session_scope() as session:
-            stmt = (
-                select(BackupTaskRecord)
-                .order_by(BackupTaskRecord.id.desc())
-                .offset(offset)
-                .limit(limit)
-            )
+            stmt = select(BackupTaskRecord).order_by(BackupTaskRecord.id.desc()).offset(offset).limit(limit)
             records = (await session.execute(stmt)).scalars().all()
             return [self._record_to_dto(record) for record in records]
 
@@ -99,11 +90,7 @@ class TaskStore:
             record.status = status.value
             record.started_at = record.started_at or started_at
             record.finished_at = finished_at
-            if (
-                status == BackupStatus.COMPLETED
-                and record.size_total
-                and record.size_completed < record.size_total
-            ):
+            if status == BackupStatus.COMPLETED and record.size_total and record.size_completed < record.size_total:
                 record.size_completed = record.size_total
             session.add(record)
             return record.size_completed, record.size_total
@@ -125,11 +112,7 @@ class TaskStore:
             size_total_value = record.size_total
             size_completed_value = record.size_completed
 
-            if (
-                size_total_hint is not None
-                and size_total_hint > 0
-                and size_total_hint != record.size_total
-            ):
+            if size_total_hint is not None and size_total_hint > 0 and size_total_hint != record.size_total:
                 record.size_total = size_total_hint
                 size_total_value = size_total_hint
                 updated = True
@@ -146,9 +129,7 @@ class TaskStore:
             return size_completed_value, size_total_value
         return None
 
-    async def _fetch_record(
-        self, session: AsyncSession, backup_id: str
-    ) -> Optional[BackupTaskRecord]:
+    async def _fetch_record(self, session: AsyncSession, backup_id: str) -> Optional[BackupTaskRecord]:
         stmt = select(BackupTaskRecord).where(BackupTaskRecord.backup_id == backup_id)
         result = await session.execute(stmt)
         return result.scalars().one_or_none()
@@ -165,4 +146,3 @@ class TaskStore:
             size_total=record.size_total,
             size_completed=record.size_completed,
         )
-

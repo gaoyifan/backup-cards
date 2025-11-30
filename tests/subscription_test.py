@@ -41,7 +41,8 @@ async def test_tasks_subscription(ws_url: str, http_url: str, source_dir: str, t
     http_transport = AIOHTTPTransport(url=http_url)
     http_client = Client(transport=http_transport)
 
-    subscription_query = gql("""
+    subscription_query = gql(
+        """
         subscription {
             backupTasksUpdated {
                 backupId
@@ -51,13 +52,16 @@ async def test_tasks_subscription(ws_url: str, http_url: str, source_dir: str, t
                 target
             }
         }
-    """)
+    """
+    )
 
-    mutation_query = gql("""
+    mutation_query = gql(
+        """
         mutation StartBackup($source: String!, $target: String!) {
             startManualBackup(source: $source, target: $target)
         }
-    """)
+    """
+    )
 
     received_updates = []
     backup_id = None
@@ -83,10 +87,7 @@ async def test_tasks_subscription(ws_url: str, http_url: str, source_dir: str, t
 
     # Start a backup to trigger updates
     async with http_client as session:
-        result = await session.execute(
-            mutation_query,
-            variable_values={"source": source_dir, "target": target_dir}
-        )
+        result = await session.execute(mutation_query, variable_values={"source": source_dir, "target": target_dir})
         backup_id = result.get("startManualBackup")
         print(f"  Started backup: {backup_id[:8]}...")
 
@@ -124,14 +125,16 @@ async def test_devices_subscription(ws_url: str):
     ws_transport = WebsocketsTransport(url=ws_url)
     ws_client = Client(transport=ws_transport)
 
-    subscription_query = gql("""
+    subscription_query = gql(
+        """
         subscription {
             devicesUpdated {
                 devicePath
                 mountPoint
             }
         }
-    """)
+    """
+    )
 
     received_updates = []
 
@@ -172,14 +175,16 @@ async def test_initial_task_state(ws_url: str):
     ws_transport = WebsocketsTransport(url=ws_url)
     ws_client = Client(transport=ws_transport)
 
-    subscription_query = gql("""
+    subscription_query = gql(
+        """
         subscription {
             backupTasksUpdated {
                 backupId
                 status
             }
         }
-    """)
+    """
+    )
 
     initial_state = None
 
@@ -245,11 +250,17 @@ def main():
         # Start server
         process = subprocess.Popen(
             [
-                "uv", "run", "python", "main.py",
+                "uv",
+                "run",
+                "python",
+                "main.py",
                 "--headless",
-                "--listen-addr", "127.0.0.1",
-                "--listen-port", "0",  # Dynamic port
-                "--db-path", db_path,
+                "--listen-addr",
+                "127.0.0.1",
+                "--listen-port",
+                "0",  # Dynamic port
+                "--db-path",
+                db_path,
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -271,7 +282,8 @@ def main():
                 if "http://" in line and ":" in line:
                     # Extract port from URL
                     import re
-                    match = re.search(r':(\d+)', line.split("http://")[-1])
+
+                    match = re.search(r":(\d+)", line.split("http://")[-1])
                     if match:
                         port = int(match.group(1))
                         print(f"Detected server on port {port}")
@@ -294,4 +306,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

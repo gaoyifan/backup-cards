@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable
 
 import pyudev
+
 from backend.config import get_config
 from backend.devices import get_device_by_path
 from backend.models import BackupStatus, BackupTaskDTO, BackupType
@@ -157,7 +158,9 @@ class BackupManager:
         if not source_path.exists():
             raise FileNotFoundError(f"Source path {source_path} does not exist.")
         return await self._enqueue_backup(
-            source=source_path, target=target_path, backup_type=BackupType.MANUAL,
+            source=source_path,
+            target=target_path,
+            backup_type=BackupType.MANUAL,
         )
 
     async def cancel_backup(self, backup_id: str) -> bool:
@@ -210,7 +213,10 @@ class BackupManager:
         return await self._backup_from_mount(mount, Path(target_path), BackupType.AUTO)
 
     async def _backup_from_mount(
-        self, mount: MountHandle, target: Path, backup_type: BackupType,
+        self,
+        mount: MountHandle,
+        target: Path,
+        backup_type: BackupType,
     ) -> str:
         """Shared device backup logic: backup from mount point with unmount cleanup."""
         cleanup: Callable[[BackupStatus], Awaitable[None]] | None = None
@@ -218,8 +224,10 @@ class BackupManager:
             cleanup = lambda _: self._unmount_path(mount.path)
         try:
             return await self._enqueue_backup(
-                source=Path(mount.path), target=target,
-                backup_type=backup_type, cleanup=cleanup,
+                source=Path(mount.path),
+                target=target,
+                backup_type=backup_type,
+                cleanup=cleanup,
             )
         except Exception:
             if cleanup:
@@ -396,9 +404,7 @@ class BackupManager:
         try:
             process = await self._launch_rsync(source, target)
             running.process = process
-            consumer = asyncio.create_task(
-                self._consume_rsync_output(backup_id, process.stdout, running)
-            )
+            consumer = asyncio.create_task(self._consume_rsync_output(backup_id, process.stdout, running))
             returncode = await process.wait()
             await consumer
             consumer = None

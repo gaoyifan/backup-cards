@@ -82,4 +82,3 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
         raise
     finally:
         await session.close()
-

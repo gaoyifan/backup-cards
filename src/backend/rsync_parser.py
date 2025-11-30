@@ -4,13 +4,16 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-PROGRESS_RE = re.compile(r"""
+PROGRESS_RE = re.compile(
+    r"""
     ^\s*(?P<bytes>[\d,]+)\s+
     (?P<percent>\d+)%\s+
     (?P<rate_value>[\d.]+)(?P<rate_unit>(?:[kMGT]i?B|[kMGT]B|B))/s\s+
     (?P<eta>\d+:\d{2}:\d{2})
     (?:\s+\(xfr\#(?P<xfr>\d+),\s+to-chk=(?P<to_chk>[\d,]+)/(?P<to_chk_total>[\d,]+)\))?
-    \s*$""", re.VERBOSE)
+    \s*$""",
+    re.VERBOSE,
+)
 
 FILES_RE = re.compile(r"^Number of files:\s+(?P<total>[\d,]+)\s+\(reg:\s+(?P<regular>[\d,]+),\s+dir:\s+(?P<dirs>[\d,]+)\)$")
 CREATED_RE = re.compile(r"^Number of created files:\s+(?P<total>[\d,]+)\s+\(reg:\s+(?P<regular>[\d,]+),\s+dir:\s+(?P<dirs>[\d,]+)\)$")
@@ -76,16 +79,22 @@ def parse_progress_line(line: str, last_status: Dict[str, Optional[int]]) -> tup
 
 
 SUMMARY_PATTERNS = [
-    (FILES_RE, lambda m, s: s.update(
-        number_of_files=parse_int(m.group("total")),
-        number_of_files_regular=parse_int(m.group("regular")),
-        number_of_files_dirs=parse_int(m.group("dirs")),
-    )),
-    (CREATED_RE, lambda m, s: s.update(
-        number_of_created_files=parse_int(m.group("total")),
-        number_of_created_files_regular=parse_int(m.group("regular")),
-        number_of_created_files_dirs=parse_int(m.group("dirs")),
-    )),
+    (
+        FILES_RE,
+        lambda m, s: s.update(
+            number_of_files=parse_int(m.group("total")),
+            number_of_files_regular=parse_int(m.group("regular")),
+            number_of_files_dirs=parse_int(m.group("dirs")),
+        ),
+    ),
+    (
+        CREATED_RE,
+        lambda m, s: s.update(
+            number_of_created_files=parse_int(m.group("total")),
+            number_of_created_files_regular=parse_int(m.group("regular")),
+            number_of_created_files_dirs=parse_int(m.group("dirs")),
+        ),
+    ),
     (DELETED_RE, lambda m, s: s.update(number_of_deleted_files=parse_int(m.group("count")))),
     (REGULAR_TRANSFERRED_RE, lambda m, s: s.update(number_of_regular_files_transferred=parse_int(m.group("count")))),
     (SIZE_LINE_RE, lambda m, s: s.update(total_file_size=parse_int(m.group("size")))),
@@ -97,15 +106,21 @@ SUMMARY_PATTERNS = [
     (FILE_LIST_TRANSFER_RE, lambda m, s: s.update(file_list_transfer_time_seconds=parse_float(m.group("seconds")))),
     (TOTAL_SENT_RE, lambda m, s: s.update(total_bytes_sent=parse_int(m.group("sent")))),
     (TOTAL_RECEIVED_RE, lambda m, s: s.update(total_bytes_received=parse_int(m.group("received")))),
-    (FINAL_RATE_RE, lambda m, s: s.update(
-        summary_bytes_sent=parse_int(m.group("sent")),
-        summary_bytes_received=parse_int(m.group("received")),
-        summary_rate_bytes_per_sec=parse_float(m.group("rate")),
-    )),
-    (SPEEDUP_RE, lambda m, s: s.update(
-        summary_total_size=parse_int(m.group("size")),
-        speedup=parse_float(m.group("speedup")),
-    )),
+    (
+        FINAL_RATE_RE,
+        lambda m, s: s.update(
+            summary_bytes_sent=parse_int(m.group("sent")),
+            summary_bytes_received=parse_int(m.group("received")),
+            summary_rate_bytes_per_sec=parse_float(m.group("rate")),
+        ),
+    ),
+    (
+        SPEEDUP_RE,
+        lambda m, s: s.update(
+            summary_total_size=parse_int(m.group("size")),
+            speedup=parse_float(m.group("speedup")),
+        ),
+    ),
 ]
 
 

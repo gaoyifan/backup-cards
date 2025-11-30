@@ -303,4 +303,3 @@ __all__ = [
     "PathHintBox",
     "PathHintManager",
 ]
-

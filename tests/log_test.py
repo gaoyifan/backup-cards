@@ -1,8 +1,10 @@
-import subprocess
 import os
-import time
+import subprocess
 import tempfile
+import time
+
 LOG_FILE = "test_sd_backup.log"
+
 
 def test_logging():
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -50,6 +52,7 @@ def test_logging():
 
         if "Starting SD Backup backend on" in stdout or "INFO:" in stderr:
             raise AssertionError("Unexpected logs in stdout/stderr.")
+
 
 if __name__ == "__main__":
     test_logging()

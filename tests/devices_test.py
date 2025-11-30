@@ -23,6 +23,4 @@ def test_list_available_devices_macos(monkeypatch):
         lambda *args, **kwargs: plistlib.dumps(disk_info),
     )
 
-    assert devices.list_available_devices() == [
-        DeviceInfo(device_path="/dev/disk2s1", mount_point="/Volumes/USB")
-    ]
+    assert devices.list_available_devices() == [DeviceInfo(device_path="/dev/disk2s1", mount_point="/Volumes/USB")]

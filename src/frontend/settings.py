@@ -7,7 +7,7 @@ import logging
 
 from textual import containers, on
 from textual.app import ComposeResult
-from textual.widgets import Button, Checkbox, Footer, Input, Label, Markdown, Rule, Switch
+from textual.widgets import Button, Footer, Input, Label, Markdown, Rule, Switch
 
 from frontend.page import PageScreen
 
@@ -151,7 +151,7 @@ class TargetTemplateForm(containers.VerticalGroup):
         if not template:
             self.query_one("#preview-value", Label).update("[dim]Enter a template above[/dim]")
             return
-        
+
         # Replace template variables with example values matching backend format
         preview = template.replace("{date}", "20240115")
         preview = preview.replace("{hour}", "14")
@@ -289,7 +289,7 @@ class SettingsScreen(PageScreen):
         """Show status message."""
         container = self.query_one("#status-container", containers.VerticalGroup)
         label = self.query_one("#status-label", Label)
-        
+
         container.remove_class("hidden", "success", "error", "info")
         container.add_class(status_type)
         label.update(message)
@@ -315,8 +315,7 @@ class SettingsScreen(PageScreen):
         target_template = input_field.value.strip()
 
         self._show_status("⏳ Saving...", "info")
-        logger.info("Saving config: autoBackupEnabled=%s, autoBackupTargetPath=%s", 
-                    auto_enabled, target_template)
+        logger.info("Saving config: autoBackupEnabled=%s, autoBackupTargetPath=%s", auto_enabled, target_template)
 
         client = self.app.client
         mutation = """
@@ -329,9 +328,7 @@ class SettingsScreen(PageScreen):
             "autoBackupTargetPath": target_template,
         }
         try:
-            result = await client.execute(
-                mutation, variable_values={"config": config_input}
-            )
+            result = await client.execute(mutation, variable_values={"config": config_input})
             if result.get("updateConfig"):
                 logger.info("Config saved successfully")
                 self._original_config = {

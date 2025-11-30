@@ -82,5 +82,3 @@ class ProgressSubscriptionManager:
             logger.warning("Progress subscription error for %s: %s", backup_id, e)
         finally:
             self._subs.pop(backup_id, None)
-
-

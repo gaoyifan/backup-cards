@@ -9,7 +9,7 @@ from textual import containers, events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.validation import Length
-from textual.widgets import Button, Footer, Input, Label, Markdown, Select, Rule
+from textual.widgets import Button, Footer, Input, Label, Markdown, Rule, Select
 
 from frontend.page import PageScreen
 from frontend.path_hints import PathHintBox, PathHintManager
@@ -76,7 +76,7 @@ class DeviceSelector(containers.VerticalGroup):
                 label = f"💿 {path}  [dim](not mounted)[/dim]"
                 value = path
             options.append((label, value))
-        
+
         if not options:
             options = [("No devices available", "")]
         select.set_options(options)
@@ -262,7 +262,7 @@ class BackupScreen(PageScreen):
         """Show status message."""
         container = self.query_one("#status-container", containers.VerticalGroup)
         label = self.query_one("#status-label", Label)
-        
+
         container.remove_class("hidden", "success", "error", "info")
         container.add_class(status_type)
         label.update(message)
@@ -334,16 +334,11 @@ class BackupScreen(PageScreen):
         }
         """
         try:
-            result = await client.execute(
-                mutation, variable_values={"source": source, "target": target}
-            )
+            result = await client.execute(mutation, variable_values={"source": source, "target": target})
             backup_id = result.get("startManualBackup")
             if backup_id:
                 logger.info("Backup started successfully with ID: %s", backup_id)
-                self._show_status(
-                    f"✓ Backup started successfully!\n  ID: {backup_id[:16]}...",
-                    "success"
-                )
+                self._show_status(f"✓ Backup started successfully!\n  ID: {backup_id[:16]}...", "success")
                 self.notify(
                     f"Backup started: {backup_id[:8]}",
                     title="Success",

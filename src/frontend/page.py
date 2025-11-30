@@ -15,5 +15,3 @@ class PageScreen(Screen):
         overflow-y: auto;
     }
     """
-
-
