@@ -30,28 +30,13 @@ shutdown_event: asyncio.Event | None = None
 
 
 def create_uvicorn_server(host, port):
-    return uvicorn.Server(uvicorn.Config(app, host=host, port=port))
+    return uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
 
 
 def get_free_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
-
-
-async def _await_backend_port(server: uvicorn.Server, timeout: float = 5.0) -> int:
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while True:
-        servers = getattr(server, "servers", None)
-        if servers:
-            sockets = servers[0].sockets
-            if sockets:
-                return sockets[0].getsockname()[1]
-        if server.should_exit or loop.time() >= deadline:
-            break
-        await asyncio.sleep(0.05)
-    raise RuntimeError("Backend server failed to bind to a port")
 
 
 async def _shutdown_backend_server(
@@ -183,10 +168,12 @@ async def web_cmd(
 ):
     """Serve the Textual UI over HTTP alongside the backend."""
 
-    listen_addr = "127.0.0.1"
+    backend_addr = "127.0.0.1"
+    backend_port = get_free_port()
 
     if web_port == 0:
         web_port = get_free_port()
+    
     
     if web_public_url is None:
         web_public_url = f"http://{web_host}:{web_port}"
@@ -194,17 +181,16 @@ async def web_cmd(
     check_rsync_available()
     await init_config_store(str(db_path))
 
-    backend_server = create_uvicorn_server(listen_addr, 0)
+    backend_server = create_uvicorn_server(backend_addr, backend_port)
     backend_task = asyncio.create_task(backend_server.serve())
-    backend_port = await _await_backend_port(backend_server)
 
-    logger.info("Serving SD Backup web UI targeting %s:%s", listen_addr, backend_port)
-    typer.echo(f"Backend starting on http://{listen_addr}:{backend_port}")
+    logger.info("Serving SD Backup web UI targeting %s:%s", backend_addr, backend_port)
+    typer.echo(f"Backend starting on http://{backend_addr}:{backend_port}")
 
     if getattr(sys, "frozen", False):
-        web_command_parts = [sys.executable, "connect", listen_addr, str(backend_port)]
+        web_command_parts = [sys.executable, "connect", backend_addr, str(backend_port)]
     else:
-        web_command_parts = [sys.executable, str(Path(__file__).resolve()), "connect", listen_addr, str(backend_port)]
+        web_command_parts = [sys.executable, str(Path(__file__).resolve()), "connect", backend_addr, str(backend_port)]
     web_command = " ".join(shlex.quote(arg) for arg in web_command_parts)
 
     textual_server = Server(web_command, web_host, web_port, "SD Backup", web_public_url)
@@ -216,7 +202,7 @@ async def web_cmd(
     await textual_site.start()
 
     typer.echo("Serving Textual web UI with backend. Press Ctrl+C to exit.")
-    typer.echo(f"Backend available at http://{listen_addr}:{backend_port}")
+    typer.echo(f"Backend available at http://{backend_addr}:{backend_port}")
     typer.echo(f"Web UI available at {web_public_url}")
 
     if with_webview:

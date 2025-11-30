@@ -12,3 +12,17 @@ build:
 
 clean:
   rm -rf dist
+
+rebuild: clean build
+
+tui:
+  uv run python app.py --log-path /dev/null tui
+
+web:
+  uv run python app.py web --with-webview
+
+daemon:
+  uv run python app.py daemon
+
+connect host port:
+  uv run python app.py connect {{host}} {{port}}
