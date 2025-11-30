@@ -5,6 +5,7 @@ import datetime
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import uuid
 from contextlib import suppress
@@ -26,14 +27,31 @@ DEFAULT_MOUNT_ROOT = "/mnt"
 MOUNT_PREFIX = "sd-backup"
 
 
+def find_rsync() -> str:
+    """Return the preferred rsync binary path or empty string if not found."""
+    candidates = [
+        "/usr/local/bin/rsync",  # Homebrew (Intel)
+        "/opt/homebrew/bin/rsync",  # Homebrew (Apple Silicon)
+        "/usr/bin/rsync",  # macOS built-in (older)
+        shutil.which("rsync"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return "rsync"
+
+
 def check_rsync_available() -> None:
     """Check if rsync is available. Raises RuntimeError if not found."""
-    try:
-        result = subprocess.run(["rsync", "--version"], capture_output=True, check=True, text=True)
-        version_line = result.stdout.split("\n", 1)[0]
-        logger.info("Found %s", version_line)
-    except FileNotFoundError:
+    rsync_bin = find_rsync()
+    if not rsync_bin:
         raise RuntimeError("rsync is required but not found. Please install rsync.")
+    try:
+        result = subprocess.run([rsync_bin, "--version"], capture_output=True, check=True, text=True)
+        version_line = result.stdout.split("\n", 1)[0]
+        logger.info("Using %s via %s", version_line, rsync_bin)
+    except FileNotFoundError as exc:
+        raise RuntimeError("rsync is required but not found. Please install rsync.") from exc
 
 
 def auto_backup_supported() -> bool:
@@ -443,8 +461,11 @@ class BackupManager:
     async def _launch_rsync(self, source: Path, target: Path) -> asyncio.subprocess.Process:
         source_arg = f"{source}/" if source.is_dir() else str(source)
         target_arg = f"{target}/" if target.is_dir() else str(target)
+        rsync_bin = find_rsync()
+        if not rsync_bin:
+            raise RuntimeError("rsync is required but not found. Please install rsync.")
         cmd = [
-            "rsync",
+            rsync_bin,
             "-a",
             "--stats",
             "--bwlimit=3m",
