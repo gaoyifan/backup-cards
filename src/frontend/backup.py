@@ -382,6 +382,11 @@ class BackupScreen(PageScreen):
                 if self._path_hints.adjust_selection(focused.id, delta):
                     event.stop()
                     return
+            elif event.key == "enter":
+                next_widget = self.focus_next()
+                if next_widget is not None:
+                    event.stop()
+                    return
         parent_handler = getattr(super(), "on_key", None)
         if parent_handler is not None:
             parent_handler(event)

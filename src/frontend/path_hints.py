@@ -20,6 +20,8 @@ query ListDirectory($path: String!) {
 }
 """
 
+MAX_HINT_PAGES = 100
+
 
 @dataclass(slots=True)
 class HintContext:
@@ -110,7 +112,7 @@ class PathHintBox(Static):
         self.update("[dim]Looking up matching entries...[/dim]")
         self.remove_class("hidden")
 
-    def show_hints(self, suggestions: list[str], selected_index: int = 0) -> None:
+    def show_hints(self, suggestions: list[str], selected_index: int = 0, page_size: int = 5) -> None:
         if not suggestions:
             self.hide_hints()
             return
@@ -122,14 +124,24 @@ class PathHintBox(Static):
         else:
             selected_index = max(0, min(selected_index, total - 1))
 
-        for idx, hint in enumerate(suggestions):
+        page_size = max(1, page_size)
+        page_start = (selected_index // page_size) * page_size
+        page_end = min(page_start + page_size, total)
+
+        for idx in range(page_start, page_end):
+            hint = suggestions[idx]
             marker = "→" if idx == selected_index else "  "
             line = f"{marker} {hint}"
             if idx == selected_index:
                 line = f"[reverse]{line}[/reverse]"
             lines.append(line)
 
-        lines.append("[dim]Use ↑/↓ to choose, Tab to insert[/dim]")
+        helper = "Use ↑/↓ to choose, Tab to insert"
+        if total > page_size:
+            current_page = (page_start // page_size) + 1
+            total_pages = (total + page_size - 1) // page_size
+            helper = f"{helper} · Page {current_page}/{total_pages}"
+        lines.append(f"[dim]{helper}[/dim]")
         self.update("\n".join(lines))
         self.remove_class("hidden")
 
@@ -141,10 +153,19 @@ class PathHintBox(Static):
 class PathHintManager:
     """Manage asynchronous lookup of path hints for one or more inputs."""
 
-    def __init__(self, screen: Screen, max_results: int = 5, debounce: float = 0.25) -> None:
+    def __init__(
+        self,
+        screen: Screen,
+        max_results: int = 5,
+        debounce: float = 0.25,
+        max_cached_results: int | None = None,
+    ) -> None:
         self._screen = screen
-        self._max_results = max_results
+        self._page_size = max(1, max_results)
         self._debounce = debounce
+        default_cache = self._page_size * MAX_HINT_PAGES
+        configured_cache = max_cached_results or default_cache
+        self._max_cached_results = min(max(1, configured_cache), default_cache)
         self._registrations: dict[str, str] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._states: dict[str, HintState] = {}
@@ -207,7 +228,12 @@ class PathHintManager:
         if count == 0:
             return False
 
-        state.selected = (state.selected + delta) % count
+        new_index = state.selected + delta
+        new_index = max(0, min(new_index, count - 1))
+        if new_index == state.selected:
+            return True
+
+        state.selected = new_index
         self._render_state(input_id)
         return True
 
@@ -261,7 +287,7 @@ class PathHintManager:
             if fragment and not entry_name.lower().startswith(fragment):
                 continue
             suggestions.append(f"{context.display_base}{entry_name}")
-            if len(suggestions) >= self._max_results:
+            if len(suggestions) >= self._max_cached_results:
                 break
         return suggestions
 
@@ -295,7 +321,7 @@ class PathHintManager:
         if not state or not state.suggestions:
             box.hide_hints()
             return
-        box.show_hints(state.suggestions, state.selected)
+        box.show_hints(state.suggestions, state.selected, self._page_size)
 
 
 __all__ = [
