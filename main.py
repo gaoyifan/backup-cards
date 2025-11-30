@@ -1,14 +1,15 @@
 import asyncio
 import logging
-import multiprocessing
 import shlex
 import socket
 import sys
+import signal
 from contextlib import suppress
 from functools import partial
 from pathlib import Path
 from typing import Optional
 
+from aiohttp import web
 import typer
 import uvicorn
 from asyncer import syncify
@@ -70,13 +71,6 @@ async def _shutdown_backend_server(
         backend_task.cancel()
         with suppress(asyncio.CancelledError):
             await backend_task
-
-
-def _run_textual_web_server(
-    command: str, host: str, port: int, title: str, public_url: str | None
-) -> None:
-    server = Server(command, host, port, title, public_url)
-    server.serve()
 
 
 @cli.callback()
@@ -156,9 +150,9 @@ async def connect(
         typer.echo("Exiting...")
 
 
-@cli.command()
+@cli.command("web")
 @partial(syncify, raise_sync_error=False)
-async def web(
+async def web_cmd(
     db_path: Path = typer.Option(Path("sd-backup.db"), "--db-path", help="SQLite path for runtime config"),
     web_host: str = typer.Option("127.0.0.1", "--web-host", help="Host to bind the Textual web server"),
     web_port: int = typer.Option(9000, "--web-port", help="Port for the Textual web server"),
@@ -171,51 +165,48 @@ async def web(
     listen_addr = "127.0.0.1"
     requested_port = 0
 
-    backend_server: uvicorn.Server | None = None
-    backend_task: asyncio.Task | None = None
-    web_process: multiprocessing.Process | None = None
+    shutdown_event = asyncio.Event()
 
-    try:
-        check_rsync_available()
-        await init_config_store(str(db_path))
+    loop = asyncio.get_running_loop()
+    loop.add_signal_handler(signal.SIGINT, shutdown_event.set)
+    loop.add_signal_handler(signal.SIGTERM, shutdown_event.set)
 
-        backend_server = create_uvicorn_server(listen_addr, requested_port)
-        backend_task = asyncio.create_task(backend_server.serve())
-        backend_port = await _await_backend_port(backend_server)
+    check_rsync_available()
+    await init_config_store(str(db_path))
 
-        logger.info("Serving SD Backup web UI targeting %s:%s", listen_addr, backend_port)
-        typer.echo(f"Backend starting on http://{listen_addr}:{backend_port}")
+    backend_server = create_uvicorn_server(listen_addr, requested_port)
+    backend_task = asyncio.create_task(backend_server.serve())
+    backend_port = await _await_backend_port(backend_server)
 
-        web_command_parts = [
-            sys.executable,
-            str(Path(__file__).resolve()),
-            "connect",
-            listen_addr,
-            str(backend_port),
-        ]
-        web_command = " ".join(shlex.quote(arg) for arg in web_command_parts)
+    logger.info("Serving SD Backup web UI targeting %s:%s", listen_addr, backend_port)
+    typer.echo(f"Backend starting on http://{listen_addr}:{backend_port}")
 
-        ctx = multiprocessing.get_context("spawn")
-        web_process = ctx.Process(
-            target=_run_textual_web_server,
-            args=(web_command, web_host, web_port, "SD Backup", web_public_url),
-            daemon=False,
-        )
+    web_command_parts = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "connect",
+        listen_addr,
+        str(backend_port),
+    ]
+    web_command = " ".join(shlex.quote(arg) for arg in web_command_parts)
 
-        typer.echo("Serving Textual web UI with backend. Press Ctrl+C to exit.")
-        typer.echo(f"Backend available at http://{listen_addr}:{backend_port}")
-        typer.echo(f"Web UI available at http://{web_host}:{web_port}")
-        web_process.start()
+    textual_server = Server(web_command, web_host, web_port, "SD Backup", web_public_url)
+    textual_server.initialize_logging()
+    textual_app = await textual_server._make_app()
+    textual_runner = web.AppRunner(textual_app, handle_signals=False)
+    await textual_runner.setup()
+    textual_site = web.TCPSite(textual_runner, web_host, web_port)
+    await textual_site.start()
 
-        await asyncio.to_thread(web_process.join)
-    except KeyboardInterrupt:
-        typer.echo("Exiting...")
-    finally:
-        if web_process is not None and web_process.is_alive():
-            web_process.terminate()
-            await asyncio.to_thread(web_process.join, 5)
+    typer.echo("Serving Textual web UI with backend. Press Ctrl+C to exit.")
+    typer.echo(f"Backend available at http://{listen_addr}:{backend_port}")
+    typer.echo(f"Web UI available at http://{web_public_url}")
 
-        await _shutdown_backend_server(backend_server, backend_task)
+    await shutdown_event.wait()
+
+    await textual_site.stop()
+    await textual_runner.cleanup()
+    await _shutdown_backend_server(backend_server, backend_task)
 
 
 @cli.command("daemon")
