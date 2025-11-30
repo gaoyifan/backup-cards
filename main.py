@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import multiprocessing
 import shlex
 import socket
 import sys
@@ -14,6 +15,7 @@ import typer
 import uvicorn
 from asyncer import syncify
 from textual_serve.server import Server
+import webview
 
 from backend.backup import check_rsync_available
 from backend.config import init_config_store
@@ -150,20 +152,33 @@ async def connect(
         typer.echo("Exiting...")
 
 
+def run_webview(web_public_url: str):
+    delimiter = '?' if '?' not in web_public_url else '&'
+    web_public_url = f"{web_public_url}{delimiter}fontsize=11" # default font size is 16
+    webview.create_window("SD Backup", web_public_url, height=800)
+    webview.start()
+
+
 @cli.command("web")
 @partial(syncify, raise_sync_error=False)
 async def web_cmd(
     db_path: Path = typer.Option(Path("sd-backup.db"), "--db-path", help="SQLite path for runtime config"),
     web_host: str = typer.Option("127.0.0.1", "--web-host", help="Host to bind the Textual web server"),
-    web_port: int = typer.Option(9000, "--web-port", help="Port for the Textual web server"),
+    web_port: int = typer.Option(0, "--web-port", help="Port for the Textual web server"),
     web_public_url: Optional[str] = typer.Option(
         None, "--web-public-url", help="External URL to advertise (for tunnels / proxies)"
     ),
+    with_webview: bool = typer.Option(False, "--with-webview", help="Start a WebView for the Textual web server"),
 ):
     """Serve the Textual UI over HTTP alongside the backend."""
 
     listen_addr = "127.0.0.1"
-    requested_port = 0
+
+    if web_port == 0:
+        web_port = get_free_port()
+    
+    if web_public_url is None:
+        web_public_url = f"http://{web_host}:{web_port}"
 
     shutdown_event = asyncio.Event()
 
@@ -174,7 +189,7 @@ async def web_cmd(
     check_rsync_available()
     await init_config_store(str(db_path))
 
-    backend_server = create_uvicorn_server(listen_addr, requested_port)
+    backend_server = create_uvicorn_server(listen_addr, 0)
     backend_task = asyncio.create_task(backend_server.serve())
     backend_port = await _await_backend_port(backend_server)
 
@@ -200,7 +215,17 @@ async def web_cmd(
 
     typer.echo("Serving Textual web UI with backend. Press Ctrl+C to exit.")
     typer.echo(f"Backend available at http://{listen_addr}:{backend_port}")
-    typer.echo(f"Web UI available at http://{web_public_url}")
+    typer.echo(f"Web UI available at {web_public_url}")
+
+    if with_webview:
+        process = multiprocessing.Process(target=run_webview, args=(web_public_url,))
+        process.start()
+
+        async def _wait_for_process_exit():
+            await loop.run_in_executor(None, process.join)
+            logger.info("WebView process exited, shutting down main loop")
+            shutdown_event.set()        
+        loop.create_task(_wait_for_process_exit())
 
     await shutdown_event.wait()
 
