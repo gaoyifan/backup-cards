@@ -8,7 +8,7 @@ from typing import AsyncGenerator, List, Optional
 
 import strawberry
 
-from backend.backup import BackupManager, task_event_bus
+from backend.backup import BackupManager, auto_backup_supported, task_event_bus
 from backend.config import Config, get_config, update_config
 from backend.devices import device_event_bus, list_available_devices
 from backend.models import BackupStatus, BackupTaskDTO, BackupType, DeviceInfo
@@ -25,6 +25,7 @@ BackupTypeEnum = strawberry.enum(BackupType, name="BackupType")
 class ConfigType:
     auto_backup_enabled: bool = strawberry.field(name="autoBackupEnabled")
     auto_backup_target_path: str = strawberry.field(name="autoBackupTargetPath")
+    auto_backup_supported: bool = strawberry.field(name="autoBackupSupported")
 
 
 @strawberry.input
@@ -62,6 +63,7 @@ def _config_to_type(config: Config) -> ConfigType:
     return ConfigType(
         auto_backup_enabled=config.auto_backup_enabled,
         auto_backup_target_path=config.auto_backup_target_path,
+        auto_backup_supported=auto_backup_supported(),
     )
 
 

@@ -34,6 +34,7 @@ type Device {
 type Config {
   autoBackupEnabled: Boolean
   autoBackupTargetPath: String  # path with template variables
+  autoBackupSupported: Boolean!  # true only when backend runs on Linux
 }
 
 type Query {

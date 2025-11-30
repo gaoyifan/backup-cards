@@ -27,6 +27,10 @@ AUTO_BACKUP_MD = """\
 Automatically start backups when SD cards are inserted.
 """
 
+AUTO_BACKUP_UNSUPPORTED_MD = """\
+⚠️ Auto backup requires the backend to run on Linux. This instance is running on an unsupported platform, so the toggle and path template are hidden.
+"""
+
 TEMPLATE_HELP_MD = """\
 ### Path Template Variables
 
@@ -75,8 +79,8 @@ class AutoBackupToggle(containers.HorizontalGroup):
     }
     """
 
-    def __init__(self, enabled: bool = False) -> None:
-        super().__init__()
+    def __init__(self, enabled: bool = False, **kwargs) -> None:
+        super().__init__(**kwargs)
         self._enabled = enabled
 
     def compose(self) -> ComposeResult:
@@ -214,14 +218,18 @@ class SettingsScreen(PageScreen):
     def __init__(self) -> None:
         super().__init__()
         self._original_config: dict = {}
+        self._auto_backup_supported = True
 
     def compose(self) -> ComposeResult:
         with containers.VerticalScroll(id="content"):
             yield Markdown(SETTINGS_MD)
             yield Markdown(AUTO_BACKUP_MD)
-            yield AutoBackupToggle()
-            yield Rule()
-            yield TargetTemplateForm()
+            yield AutoBackupToggle(id="auto-backup-toggle")
+            unsupported_msg = Markdown(AUTO_BACKUP_UNSUPPORTED_MD, id="auto-backup-unsupported")
+            unsupported_msg.display = False
+            yield unsupported_msg
+            yield Rule(id="target-template-divider")
+            yield TargetTemplateForm(id="target-template-form")
             with containers.HorizontalGroup(id="button-row"):
                 yield Button(
                     "💾 Save Settings",
@@ -252,6 +260,7 @@ class SettingsScreen(PageScreen):
             config {
                 autoBackupEnabled
                 autoBackupTargetPath
+                autoBackupSupported
             }
         }
         """
@@ -261,9 +270,13 @@ class SettingsScreen(PageScreen):
             config = result.get("config", {})
             logger.debug("Loaded config: %s", config)
             self._original_config = config
+            self._auto_backup_supported = config.get("autoBackupSupported", True)
 
             switch = self.query_one("#auto-backup-switch", Switch)
             switch.value = config.get("autoBackupEnabled", False)
+            switch.disabled = not self._auto_backup_supported
+
+            self._update_auto_backup_visibility(self._auto_backup_supported)
 
             input_field = self.query_one("#target-template-input", Input)
             template = config.get("autoBackupTargetPath", "")
@@ -311,7 +324,7 @@ class SettingsScreen(PageScreen):
         switch = self.query_one("#auto-backup-switch", Switch)
         input_field = self.query_one("#target-template-input", Input)
 
-        auto_enabled = switch.value
+        auto_enabled = switch.value if self._auto_backup_supported else False
         target_template = input_field.value.strip()
 
         self._show_status("⏳ Saving...", "info")
@@ -351,7 +364,7 @@ class SettingsScreen(PageScreen):
         switch = self.query_one("#auto-backup-switch", Switch)
         input_field = self.query_one("#target-template-input", Input)
 
-        switch.value = self._original_config.get("autoBackupEnabled", False)
+        switch.value = self._original_config.get("autoBackupEnabled", False) and self._auto_backup_supported
         template = self._original_config.get("autoBackupTargetPath", "")
         input_field.value = template
 
@@ -359,3 +372,14 @@ class SettingsScreen(PageScreen):
         template_form.update_preview(template)
 
         self._show_status("↺ Reset to last saved values", "info")
+
+    def _update_auto_backup_visibility(self, supported: bool) -> None:
+        """Toggle auto backup UI based on backend support."""
+        toggle = self.query_one(AutoBackupToggle)
+        notice = self.query_one("#auto-backup-unsupported", Markdown)
+        divider = self.query_one("#target-template-divider", Rule)
+        template_form = self.query_one(TargetTemplateForm)
+        toggle.display = supported
+        notice.display = not supported
+        divider.display = supported
+        template_form.display = supported
