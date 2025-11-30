@@ -17,13 +17,11 @@ def test_logging():
                 "run",
                 "python",
                 "app.py",
-                "--headless",
-                "--listen-addr",
-                "127.0.0.1",
-                "--listen-port",
-                "0",
                 "--log-path",
                 log_path,
+                "daemon",
+                "127.0.0.1",
+                "0",
                 "--db-path",
                 db_path,
             ],
@@ -42,16 +40,19 @@ def test_logging():
 
         stdout, stderr = process.communicate()
 
-        if os.path.exists(log_path):
-            with open(log_path, "r") as f:
-                logs = f.read()
-                if "Starting SD Backup backend on" not in logs:
-                    raise AssertionError("Expected backend logs in log file.")
-        else:
+        if not os.path.exists(log_path):
             raise AssertionError("Log file not created.")
 
-        if "Starting SD Backup backend on" in stdout or "INFO:" in stderr:
-            raise AssertionError("Unexpected logs in stdout/stderr.")
+        with open(log_path, "r") as f:
+            logs = f.read()
+            if "Starting SD Backup backend (daemon mode)" not in logs:
+                raise AssertionError("Expected backend logs in log file.")
+
+        if "Starting SD Backup backend (daemon mode)" in stdout:
+            raise AssertionError("Backend log message leaked to stdout.")
+
+        if "Starting SD Backup backend (daemon mode)" in stderr or "INFO:" in stderr:
+            raise AssertionError("Unexpected logs in stderr.")
 
 
 if __name__ == "__main__":
