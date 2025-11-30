@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 import multiprocessing
 import shlex
@@ -24,19 +25,12 @@ from frontend.app import SDBackupApp
 
 logger = logging.getLogger(__name__)
 cli = typer.Typer(no_args_is_help=True)
+shutdown_event: asyncio.Event | None = None
 
 
 
-def create_uvicorn_server(host, port, log_config=None):
-    config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        log_level="info",
-        log_config=log_config,
-        loop="asyncio",
-    )
-    return uvicorn.Server(config)
+def create_uvicorn_server(host, port):
+    return uvicorn.Server(uvicorn.Config(app, host=host, port=port))
 
 
 def get_free_port():
@@ -98,38 +92,48 @@ def main_callback(
     root_logger.addHandler(handler)
 
 
+def with_shutdown_event(func):
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        global shutdown_event
+        shutdown_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGINT, shutdown_event.set)
+        loop.add_signal_handler(signal.SIGTERM, shutdown_event.set)
+        return await func(*args, **kwargs)
+    return wrapper
+
 @cli.command()
 @partial(syncify, raise_sync_error=False)
+@with_shutdown_event
 async def tui(
     db_path: Path = typer.Option(Path("sd-backup.db"), "--db-path", help="SQLite path for runtime config"),
 ):
     """Run the backend and Textual UI inside the terminal."""
 
-    listen_addr = "127.0.0.1"
-    requested_port = 0
+    backend_addr = "127.0.0.1"
+    backend_port = get_free_port()
 
-    backend_server: uvicorn.Server | None = None
-    backend_task: asyncio.Task | None = None
+    check_rsync_available()
+    await init_config_store(str(db_path))
 
-    try:
-        check_rsync_available()
-        await init_config_store(str(db_path))
+    backend_server = create_uvicorn_server(backend_addr, backend_port)
+    backend_task = asyncio.create_task(backend_server.serve())
 
-        backend_server = create_uvicorn_server(listen_addr, requested_port)
-        backend_task = asyncio.create_task(backend_server.serve())
+    logger.info("Starting SD Backup TUI with backend targeting %s:%s", backend_addr, backend_port)
+    typer.echo(f"Backend starting on http://{backend_addr}:{backend_port}")
 
-        backend_port = await _await_backend_port(backend_server)
+    typer.echo("Launching terminal UI. Press Ctrl+C to exit.")
+    ui_app = SDBackupApp(host=backend_addr, port=backend_port)
 
-        logger.info("Starting SD Backup TUI with backend targeting %s:%s", listen_addr, backend_port)
-        typer.echo(f"Backend starting on http://{listen_addr}:{backend_port}")
-
-        typer.echo("Launching terminal UI. Press Ctrl+C to exit.")
-        ui_app = SDBackupApp(host=listen_addr, port=backend_port)
+    async def run_ui_app():
         await ui_app.run_async()
-    except KeyboardInterrupt:
-        typer.echo("Exiting...")
-    finally:
-        await _shutdown_backend_server(backend_server, backend_task)
+        shutdown_event.set()
+
+    asyncio.get_running_loop().create_task(run_ui_app())
+
+    await shutdown_event.wait()
+    await _shutdown_backend_server(backend_server, backend_task)
 
 
 @cli.command("connect")
@@ -140,20 +144,14 @@ async def connect(
 ):
     """Run only the Textual UI, connecting to an existing backend."""
 
-    if backend_port <= 0:
-        raise typer.BadParameter("PORT must be greater than 0", param_name="PORT")
-
-    try:
-        logger.info("Starting SD Backup connect mode targeting %s:%s", backend_addr, backend_port)
-        typer.echo(f"Frontend connecting to http://{backend_addr}:{backend_port}")
-        typer.echo("Running TUI only. Press Ctrl+C to exit.")
-        ui_app = SDBackupApp(host=backend_addr, port=backend_port)
-        await ui_app.run_async()
-    except KeyboardInterrupt:
-        typer.echo("Exiting...")
+    logger.info("Starting SD Backup connect mode targeting %s:%s", backend_addr, backend_port)
+    typer.echo(f"Frontend connecting to http://{backend_addr}:{backend_port}")
+    typer.echo("Running TUI only. Press Ctrl+C to exit.")
+    ui_app = SDBackupApp(host=backend_addr, port=backend_port)
+    await ui_app.run_async()
 
 
-def run_webview(web_public_url: str):
+def _run_webview(web_public_url: str):
     delimiter = '?' if '?' not in web_public_url else '&'
     web_public_url = f"{web_public_url}{delimiter}fontsize=11" # default font size is 16
     webview.create_window("SD Backup", web_public_url, height=800)
@@ -162,6 +160,7 @@ def run_webview(web_public_url: str):
 
 @cli.command("web")
 @partial(syncify, raise_sync_error=False)
+@with_shutdown_event
 async def web_cmd(
     db_path: Path = typer.Option(Path("sd-backup.db"), "--db-path", help="SQLite path for runtime config"),
     web_host: str = typer.Option("127.0.0.1", "--web-host", help="Host to bind the Textual web server"),
@@ -180,12 +179,6 @@ async def web_cmd(
     
     if web_public_url is None:
         web_public_url = f"http://{web_host}:{web_port}"
-
-    shutdown_event = asyncio.Event()
-
-    loop = asyncio.get_running_loop()
-    loop.add_signal_handler(signal.SIGINT, shutdown_event.set)
-    loop.add_signal_handler(signal.SIGTERM, shutdown_event.set)
 
     check_rsync_available()
     await init_config_store(str(db_path))
@@ -216,14 +209,17 @@ async def web_cmd(
     typer.echo(f"Web UI available at {web_public_url}")
 
     if with_webview:
-        process = multiprocessing.Process(target=run_webview, args=(web_public_url,))
+        loop = asyncio.get_running_loop()
+        process = multiprocessing.Process(target=_run_webview, args=(web_public_url,))
         process.start()
-
+        
         async def _wait_for_process_exit():
             await loop.run_in_executor(None, process.join)
             logger.info("WebView process exited, shutting down main loop")
             shutdown_event.set()        
+        
         loop.create_task(_wait_for_process_exit())
+
     await shutdown_event.wait()
     await textual_site.stop()
     await textual_runner.cleanup()
@@ -242,18 +238,15 @@ async def daemon(
     if listen_port == 0:
         listen_port = get_free_port()
 
-    try:
-        check_rsync_available()
-        await init_config_store(str(db_path))
+    check_rsync_available()
+    await init_config_store(str(db_path))
 
-        logger.info("Starting SD Backup backend (daemon mode) targeting %s:%s", listen_addr, listen_port)
-        typer.echo(f"Backend starting on http://{listen_addr}:{listen_port}")
+    logger.info("Starting SD Backup backend (daemon mode) targeting %s:%s", listen_addr, listen_port)
+    typer.echo(f"Backend starting on http://{listen_addr}:{listen_port}")
 
-        typer.echo("Running in daemon mode. Press Ctrl+C to exit.")
-        server = create_uvicorn_server(listen_addr, listen_port)
-        await server.serve()
-    except KeyboardInterrupt:
-        typer.echo("Exiting...")
+    typer.echo("Running in daemon mode. Press Ctrl+C to exit.")
+    server = create_uvicorn_server(listen_addr, listen_port)
+    await server.serve()
 
 
 if __name__ == "__main__":
