@@ -16,7 +16,7 @@ def test_logging():
                 "uv",
                 "run",
                 "python",
-                "main.py",
+                "app.py",
                 "--headless",
                 "--listen-addr",
                 "127.0.0.1",

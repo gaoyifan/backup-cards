@@ -30,7 +30,7 @@ The SD Backup Tool is a Python application designed to automatically back up sto
 
 ### Component Overview
 
-#### 1. Entry Point (`main.py`)
+#### 1. Entry Point (`app.py`)
 - Single entry point for the application implemented with Typer.
 - CLI options include:
   - `--headless` (backend only)
@@ -74,7 +74,7 @@ The SD Backup Tool is a Python application designed to automatically back up sto
 
 **`app.py`**
 - Textual application main entry point
-- Receives host/port from `main.py`
+- Receives host/port from `app.py`
 - Creates GraphQL client
 
 **`client.py`**
@@ -154,7 +154,7 @@ all([
 
 ## Logging
 
-Logging is configured in `main.py`:
+Logging is configured in `app.py`:
 
 - If `log_path` is set: All logs go to file, stdout/stderr are silent
 - If `log_path` is null: Logs go to stderr with timestamps
@@ -173,17 +173,17 @@ When `--listen-port` is set to `0`:
 
 ### Full Mode (Backend + Frontend)
 ```bash
-uv run python main.py
+uv run python app.py
 ```
 
 ### Headless Mode (Backend Only)
 ```bash
-uv run python main.py --headless
+uv run python app.py --headless
 ```
 
 ### Web Mode (Browser UI)
 ```bash
-uv run python main.py --web --web-host 0.0.0.0 --web-port 8080
+uv run python app.py --web --web-host 0.0.0.0 --web-port 8080
 ```
 
 - When `--frontend-only` is omitted, the backend starts locally and the web server proxies the Textual UI.
@@ -198,7 +198,7 @@ sd-backup/
 ├── src/
 │   ├── backend/       # Backend code (config/db live here)
 │   ├── frontend/      # Frontend code
-│   └── main.py        # Entry point (Typer CLI)
+│   └── app.py        # Entry point (Typer CLI)
 ├── tests/             # Test files
 ├── docs/              # Documentation
 └── pyproject.toml     # Project metadata

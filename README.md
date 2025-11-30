@@ -7,7 +7,7 @@ CLI managed backups with automated device monitoring and a Textual UI.
 Install dependencies with `uv sync` and launch:
 
 ```
-uv run python main.py --headless --listen-addr 127.0.0.1 --listen-port 0 --log-path sd-backup.log --db-path ~/.config/sd-backup/config.db
+uv run python app.py --headless --listen-addr 127.0.0.1 --listen-port 0 --log-path sd-backup.log --db-path ~/.config/sd-backup/config.db
 ```
 
 - `--listen-addr` / `--listen-port` choose the GraphQL endpoint (port `0` selects a free port).
@@ -21,7 +21,7 @@ uv run python main.py --headless --listen-addr 127.0.0.1 --listen-port 0 --log-p
 Run the UI in a browser tab instead of the terminal:
 
 ```
-uv run python main.py --web --listen-addr 127.0.0.1 --listen-port 0 --web-host 0.0.0.0 --web-port 8080
+uv run python app.py --web --listen-addr 127.0.0.1 --listen-port 0 --web-host 0.0.0.0 --web-port 8080
 ```
 
 - The GraphQL backend always runs in the same process when `--web` is used.

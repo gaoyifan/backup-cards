@@ -73,7 +73,7 @@ async def run_test() -> None:
             "uv",
             "run",
             "python",
-            "main.py",
+            "app.py",
             "--headless",
             "--listen-port",
             str(port),

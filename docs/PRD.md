@@ -44,7 +44,7 @@ The system supports dynamic target path generation using the following variables
 * Language: Python (Async)
 * Project Manager: uv
 
-### 4.1 Entry Point (`/main.py`)
+### 4.1 Entry Point (`/app.py`)
 * Logging: Loguru
 * CLI: Typer
 * Web Server: Uvicorn
