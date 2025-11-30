@@ -35,4 +35,4 @@ build-backend = "hatchling.build"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/backend", "src/frontend"]
+packages = ["src/backend", "src/frontend", "app.py"]

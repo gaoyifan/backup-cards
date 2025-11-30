@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 cli = typer.Typer(no_args_is_help=True)
 
 
+
 def create_uvicorn_server(host, port, log_config=None):
     config = uvicorn.Config(
         app,
@@ -196,13 +197,10 @@ async def web_cmd(
     logger.info("Serving SD Backup web UI targeting %s:%s", listen_addr, backend_port)
     typer.echo(f"Backend starting on http://{listen_addr}:{backend_port}")
 
-    web_command_parts = [
-        sys.executable,
-        str(Path(__file__).resolve()),
-        "connect",
-        listen_addr,
-        str(backend_port),
-    ]
+    if getattr(sys, "frozen", False):
+        web_command_parts = [sys.executable, "connect", listen_addr, str(backend_port)]
+    else:
+        web_command_parts = [sys.executable, str(Path(__file__).resolve()), "connect", listen_addr, str(backend_port)]
     web_command = " ".join(shlex.quote(arg) for arg in web_command_parts)
 
     textual_server = Server(web_command, web_host, web_port, "SD Backup", web_public_url)
@@ -226,9 +224,7 @@ async def web_cmd(
             logger.info("WebView process exited, shutting down main loop")
             shutdown_event.set()        
         loop.create_task(_wait_for_process_exit())
-
     await shutdown_event.wait()
-
     await textual_site.stop()
     await textual_runner.cleanup()
     await _shutdown_backend_server(backend_server, backend_task)
