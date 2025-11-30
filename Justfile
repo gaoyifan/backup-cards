@@ -26,3 +26,8 @@ daemon:
 
 connect host port:
   uv run python app.py connect {{host}} {{port}}
+
+fmt:
+  uv run autoflake --remove-all-unused-imports --remove-unused-variables --recursive --in-place src tests
+  uv run isort -l 150 src tests
+  uv run black -l 150 src tests
