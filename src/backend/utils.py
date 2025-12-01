@@ -10,36 +10,34 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MOUNT_ROOT = "/mnt"
+MOUNT_PREFIX = "sd-backup"
+
 
 def find_rsync() -> str:
     """Return the preferred rsync binary path or 'rsync' as fallback."""
     candidates = [
-        "/usr/local/bin/rsync",  # Homebrew (Intel)
-        "/opt/homebrew/bin/rsync",  # Homebrew (Apple Silicon)
-        "/usr/bin/rsync",  # macOS built-in (older)
+        "/usr/local/bin/rsync",
+        "/opt/homebrew/bin/rsync",
+        "/usr/bin/rsync",
         shutil.which("rsync"),
     ]
-    for candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            return candidate
-    return "rsync"
+    return next((c for c in candidates if c and os.path.exists(c)), "rsync")
 
 
 def check_rsync_available() -> None:
     """Check if rsync is available. Raises RuntimeError if not found."""
     rsync_bin = find_rsync()
     if not rsync_bin:
-        raise RuntimeError("rsync is required but not found. Please install rsync.")
+        raise RuntimeError("rsync is required but not found.")
     try:
         result = subprocess.run([rsync_bin, "--version"], capture_output=True, check=True, text=True)
-        version_line = result.stdout.split("\n", 1)[0]
-        logger.info("Using %s via %s", version_line, rsync_bin)
+        logger.info("Using %s via %s", result.stdout.split("\n", 1)[0], rsync_bin)
     except FileNotFoundError as exc:
-        raise RuntimeError("rsync is required but not found. Please install rsync.") from exc
+        raise RuntimeError("rsync is required but not found.") from exc
 
 
 def auto_backup_supported() -> bool:
-    """Return True if auto-backup is supported on this platform."""
     return platform.system() == "Linux"
 
 
@@ -50,42 +48,81 @@ def calculate_size(path: Path) -> int:
             return path.stat().st_size
         except OSError:
             return 0
-
-    total_size = 0
+    total = 0
     for root, _, files in os.walk(path):
-        for file_name in files:
-            file_path = Path(root) / file_name
+        for name in files:
             try:
-                total_size += file_path.stat().st_size
+                total += (Path(root) / name).stat().st_size
             except OSError:
-                continue
-    return total_size
+                pass
+    return total
 
 
 def resolve_target_path(uuid_value: str, fs_label: str, source_path: str, template: str) -> str:
     """Resolve target path template with device info and earliest file timestamp."""
-    uuid_short = uuid_value[:4] if len(uuid_value) >= 4 else uuid_value
     earliest_mtime = None
     try:
         for root, _, files in os.walk(source_path):
             for name in files:
-                filepath = os.path.join(root, name)
                 try:
-                    mtime = os.path.getmtime(filepath)
+                    mtime = os.path.getmtime(os.path.join(root, name))
+                    if earliest_mtime is None or mtime < earliest_mtime:
+                        earliest_mtime = mtime
                 except OSError:
-                    continue
-                if earliest_mtime is None or mtime < earliest_mtime:
-                    earliest_mtime = mtime
+                    pass
     except Exception as exc:
         logger.warning("Error scanning %s for timestamps: %s", source_path, exc)
 
     dt = datetime.datetime.fromtimestamp(earliest_mtime) if earliest_mtime else datetime.datetime.now()
-    target_path = template.format(
-        date=dt.strftime("%Y%m%d"),
-        hour=dt.strftime("%H"),
-        minute=dt.strftime("%M"),
-        uuid=uuid_value,
-        uuid_short=uuid_short,
-        fs_label=fs_label,
+    return os.path.expanduser(
+        template.format(
+            date=dt.strftime("%Y%m%d"),
+            hour=dt.strftime("%H"),
+            minute=dt.strftime("%M"),
+            uuid=uuid_value,
+            uuid_short=uuid_value[:4] if len(uuid_value) >= 4 else uuid_value,
+            fs_label=fs_label,
+        )
     )
-    return os.path.expanduser(target_path)
+
+
+def find_mount_point(device_node: str) -> str | None:
+    """Return existing mount point for device, or None if not mounted."""
+    with open("/proc/mounts", "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.split()
+            if parts and parts[0] == device_node:
+                return os.path.realpath(parts[1])
+    return None
+
+
+def mount_device(device_node: str, uuid_value: str) -> tuple[str, bool]:
+    """Mount device if not already mounted. Returns (mount_path, owned)."""
+    if existing := find_mount_point(device_node):
+        logger.info("Device %s already mounted at %s", device_node, existing)
+        return existing, False
+
+    mount_point = os.path.join(DEFAULT_MOUNT_ROOT, f"{MOUNT_PREFIX}-{uuid_value}")
+    os.makedirs(mount_point, exist_ok=True)
+    logger.info("Mounting %s to %s", device_node, mount_point)
+    subprocess.run(["mount", device_node, mount_point], check=True)
+    return os.path.realpath(mount_point), True
+
+
+def unmount_device(mount_point: str) -> None:
+    """Unmount device and remove temp mount directory if applicable."""
+    try:
+        subprocess.run(["umount", mount_point], check=True)
+    except subprocess.CalledProcessError as exc:
+        logger.warning("Failed to unmount %s: %s", mount_point, exc)
+        return
+
+    # Clean up temp mount dir
+    try:
+        path = Path(mount_point).resolve()
+        root = Path(DEFAULT_MOUNT_ROOT).resolve()
+        if path.parent == root and path.name.startswith(f"{MOUNT_PREFIX}-"):
+            path.rmdir()
+            logger.debug("Removed temporary mount directory %s", path)
+    except (OSError, FileNotFoundError):
+        pass
