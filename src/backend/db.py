@@ -22,6 +22,10 @@ class Config(Base):
     id = Column(Integer, primary_key=True, default=1)
     auto_backup_enabled = Column(Boolean, nullable=False, default=False)
     auto_backup_target_path = Column(Text, nullable=False)
+    # JSON-encoded list of rsync exclude patterns (e.g., ["*.tmp", ".DS_Store"])
+    exclude_patterns = Column(Text, nullable=False, default="[]")
+    # JSON-encoded list of rsync include patterns (e.g., ["*.jpg", "*.raw"])
+    include_patterns = Column(Text, nullable=False, default="[]")
 
 
 class BackupTaskRecord(Base):

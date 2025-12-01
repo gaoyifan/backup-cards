@@ -22,10 +22,20 @@ Configuration object.
 
 ```graphql
 type Config {
-  mountPointTemplate: String!
-  targetPathTemplate: String!
+  autoBackupEnabled: Boolean!
+  autoBackupTargetPath: String!
+  autoBackupSupported: Boolean!
+  excludePatterns: [String!]!
+  includePatterns: [String!]!
 }
 ```
+
+**Fields:**
+- `autoBackupEnabled`: Whether automatic backup on device insertion is enabled
+- `autoBackupTargetPath`: Target path template with variables like `{date}`, `{uuid_short}`
+- `autoBackupSupported`: Whether auto backup is supported (true only on Linux)
+- `excludePatterns`: List of rsync exclude patterns (e.g., `["*.tmp", ".DS_Store"]`)
+- `includePatterns`: List of rsync include patterns (processed first)
 
 #### BackupStatus
 Current backup status.
@@ -58,8 +68,11 @@ Get current configuration.
 ```graphql
 query {
   config {
-    mountPointTemplate
-    targetPathTemplate
+    autoBackupEnabled
+    autoBackupTargetPath
+    autoBackupSupported
+    excludePatterns
+    includePatterns
   }
 }
 ```
@@ -71,8 +84,11 @@ query {
 {
   "data": {
     "config": {
-      "mountPointTemplate": "/media/sd-backup-{uuid}",
-      "targetPathTemplate": "~/backups/{date}"
+      "autoBackupEnabled": true,
+      "autoBackupTargetPath": "~/sd-backups/{date}-{uuid_short}",
+      "autoBackupSupported": true,
+      "excludePatterns": [".DS_Store", "Thumbs.db", "*.tmp"],
+      "includePatterns": []
     }
   }
 }
@@ -196,31 +212,35 @@ mutation {
 - Safe to call even if no backup is running
 
 #### updateConfig
-Update a configuration value.
+Update configuration values.
 
 ```graphql
-mutation($key: String!, $value: String!) {
-  updateConfig(key: $key, value: $value)
+mutation UpdateConfig($config: ConfigInput!) {
+  updateConfig(config: $config)
 }
 ```
 
-**Parameters:**
-- `key` (String!): Configuration key
-- `value` (String!): New value
+**Input Type:**
+```graphql
+input ConfigInput {
+  autoBackupEnabled: Boolean
+  autoBackupTargetPath: String
+  excludePatterns: [String!]
+  includePatterns: [String!]
+}
+```
 
-**Returns:** `String!` - Status message
-
-**Valid Keys:**
-- `mount_point_template`
-- `target_path_template`
+**Returns:** `Boolean!` - True if update succeeded
 
 **Example:**
 ```graphql
 mutation {
-  updateConfig(
-    key: "target_path_template",
-    value: "~/backups/{date}/{hour}"
-  )
+  updateConfig(config: {
+    autoBackupEnabled: true,
+    autoBackupTargetPath: "~/backups/{date}/{hour}",
+    excludePatterns: [".DS_Store", "*.tmp"],
+    includePatterns: ["*.CR2", "*.jpg"]
+  })
 }
 ```
 
@@ -228,7 +248,7 @@ mutation {
 ```json
 {
   "data": {
-    "updateConfig": "Config updated"
+    "updateConfig": true
   }
 }
 ```
@@ -236,6 +256,8 @@ mutation {
 **Notes:**
 - Changes are immediately persisted to the SQLite runtime config (`--db-path`)
 - CLI options such as listen address/port still require a restart to take effect
+- Include patterns are processed first by rsync, then exclude patterns
+- Only provided fields are updated; omitted fields retain their current values
 
 ### Subscriptions
 

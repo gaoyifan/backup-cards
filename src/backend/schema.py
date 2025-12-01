@@ -27,12 +27,16 @@ class ConfigType:
     auto_backup_enabled: bool = strawberry.field(name="autoBackupEnabled")
     auto_backup_target_path: str = strawberry.field(name="autoBackupTargetPath")
     auto_backup_supported: bool = strawberry.field(name="autoBackupSupported")
+    exclude_patterns: List[str] = strawberry.field(name="excludePatterns")
+    include_patterns: List[str] = strawberry.field(name="includePatterns")
 
 
 @strawberry.input
 class ConfigInput:
     auto_backup_enabled: Optional[bool] = strawberry.field(name="autoBackupEnabled", default=None)
     auto_backup_target_path: Optional[str] = strawberry.field(name="autoBackupTargetPath", default=None)
+    exclude_patterns: Optional[List[str]] = strawberry.field(name="excludePatterns", default=None)
+    include_patterns: Optional[List[str]] = strawberry.field(name="includePatterns", default=None)
 
 
 @strawberry.type
@@ -65,6 +69,8 @@ def _config_to_type(config: Config) -> ConfigType:
         auto_backup_enabled=config.auto_backup_enabled,
         auto_backup_target_path=config.auto_backup_target_path,
         auto_backup_supported=auto_backup_supported(),
+        exclude_patterns=config.exclude_patterns,
+        include_patterns=config.include_patterns,
     )
 
 
@@ -146,6 +152,8 @@ class Mutation:
         await update_config(
             auto_backup_enabled=config.auto_backup_enabled,
             auto_backup_target_path=config.auto_backup_target_path,
+            exclude_patterns=config.exclude_patterns,
+            include_patterns=config.include_patterns,
         )
         return True
 

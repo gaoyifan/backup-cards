@@ -35,6 +35,15 @@ type Config {
   autoBackupEnabled: Boolean
   autoBackupTargetPath: String  # path with template variables
   autoBackupSupported: Boolean!  # true only when backend runs on Linux
+  excludePatterns: [String!]!  # rsync exclude patterns (e.g., ["*.tmp", ".DS_Store"])
+  includePatterns: [String!]!  # rsync include patterns (processed first)
+}
+
+input ConfigInput {
+  autoBackupEnabled: Boolean
+  autoBackupTargetPath: String
+  excludePatterns: [String!]
+  includePatterns: [String!]
 }
 
 type Query {
@@ -48,7 +57,7 @@ type Query {
 type Mutation {
   startManualBackup(source: String!, target: String!): ID!  # source can be directory or device path
   cancelBackup(backupId: ID!): Boolean!
-  updateConfig(config: Config!): Boolean!
+  updateConfig(config: ConfigInput!): Boolean!
 }
 
 type Subscription {

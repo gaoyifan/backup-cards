@@ -49,6 +49,122 @@ earliest file modification time found on the SD card (or current time if empty).
 **Example:** `~/sd-backups/{date}-{uuid_short}` → `~/sd-backups/20240115-1234`
 """
 
+FILTER_RULES_MD = """\
+## Filter Rules
+
+Control which files are included or excluded from backups using rsync patterns.
+"""
+
+FILTER_HELP_MD = """\
+### Pattern Syntax
+
+| Pattern | Matches |
+|---------|---------|
+| `*.tmp` | All .tmp files |
+| `.DS_Store` | Exact filename |
+| `Thumbs.db` | Exact filename |
+| `/DCIM/` | DCIM folder at root |
+| `*.CR2` | All Canon RAW files |
+| `**/*.jpg` | All JPG files in any subfolder |
+
+**Include rules** are processed first, then **exclude rules**. \
+If you want to only backup certain files, add them to includes and add `*` to excludes.
+"""
+
+
+class PatternListEditor(containers.VerticalGroup):
+    """Editable list of rsync patterns (for include/exclude rules)."""
+
+    DEFAULT_CSS = """
+    PatternListEditor {
+        height: auto;
+        padding: 1 2;
+        background: $boost;
+        margin: 1 0;
+        
+        .pattern-title { text-style: bold; margin-bottom: 1; }
+        .pattern-description { color: $text-muted; margin-bottom: 1; }
+        .pattern-input-row { height: auto; margin-bottom: 1; }
+        .pattern-input { width: 1fr; }
+        .pattern-add-btn { margin-left: 1; min-width: 8; }
+        .pattern-list { height: auto; max-height: 12; overflow-y: auto; background: $surface; padding: 1; }
+        .pattern-item { height: auto; }
+        .pattern-text { width: 1fr; }
+        .empty-message { color: $text-muted; text-style: italic; }
+        
+        .pattern-remove-btn {
+            min-width: 3;
+            background: transparent;
+            border: none;
+            color: $error;
+        }
+    }
+    """
+
+    def __init__(self, title: str, description: str, pattern_id: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._title = title
+        self._description = description
+        self._pattern_id = pattern_id
+        self._patterns: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield Label(self._title, classes="pattern-title")
+        yield Label(self._description, classes="pattern-description")
+        with containers.HorizontalGroup(classes="pattern-input-row"):
+            yield Input(placeholder="Enter pattern (e.g., *.tmp)", classes="pattern-input", id=f"{self._pattern_id}-input")
+            yield Button("+ Add", classes="pattern-add-btn", variant="primary", id=f"{self._pattern_id}-add-btn")
+        yield containers.VerticalGroup(classes="pattern-list", id=f"{self._pattern_id}-list")
+
+    def on_mount(self) -> None:
+        self._refresh_list()
+
+    @property
+    def patterns(self) -> list[str]:
+        return list(self._patterns)
+
+    @patterns.setter
+    def patterns(self, value: list[str]) -> None:
+        self._patterns = list(value)
+        if self.is_mounted:
+            self._refresh_list()
+
+    def add_pattern(self, pattern: str) -> bool:
+        """Add a pattern if valid and not duplicate. Returns True if added."""
+        pattern = pattern.strip()
+        if not pattern or pattern in self._patterns:
+            return False
+        self._patterns.append(pattern)
+        self._refresh_list()
+        return True
+
+    def remove_pattern(self, pattern: str) -> bool:
+        """Remove a pattern. Returns True if removed."""
+        if pattern not in self._patterns:
+            return False
+        self._patterns.remove(pattern)
+        self._refresh_list()
+        return True
+
+    def _create_pattern_item(self, pattern: str) -> containers.HorizontalGroup:
+        """Create a pattern item widget with remove button."""
+        item = containers.HorizontalGroup(classes="pattern-item")
+        item.compose_add_child(Label(f"  {pattern}", classes="pattern-text"))
+        item.compose_add_child(
+            Button("✕", classes="pattern-remove-btn", id=f"remove-{self._pattern_id}-{pattern}")
+        )
+        return item
+
+    def _refresh_list(self) -> None:
+        """Rebuild the pattern list UI."""
+        container = self.query_one(f"#{self._pattern_id}-list", containers.VerticalGroup)
+        container.remove_children()
+        if self._patterns:
+            for pattern in self._patterns:
+                container.mount(self._create_pattern_item(pattern))
+        else:
+            container.mount(Label("No patterns configured", classes="empty-message"))
+
 
 class AutoBackupToggle(containers.HorizontalGroup):
     """Auto backup toggle with status."""
@@ -230,6 +346,21 @@ class SettingsScreen(PageScreen):
             yield unsupported_msg
             yield Rule(id="target-template-divider")
             yield TargetTemplateForm(id="target-template-form")
+            yield Rule()
+            yield Markdown(FILTER_RULES_MD)
+            yield PatternListEditor(
+                title="📂 Include Patterns",
+                description="Files matching these patterns will be included (processed first)",
+                pattern_id="include-patterns",
+                id="include-patterns-editor",
+            )
+            yield PatternListEditor(
+                title="🚫 Exclude Patterns",
+                description="Files matching these patterns will be excluded from backup",
+                pattern_id="exclude-patterns",
+                id="exclude-patterns-editor",
+            )
+            yield Markdown(FILTER_HELP_MD)
             with containers.HorizontalGroup(id="button-row"):
                 yield Button(
                     "💾 Save Settings",
@@ -261,6 +392,8 @@ class SettingsScreen(PageScreen):
                 autoBackupEnabled
                 autoBackupTargetPath
                 autoBackupSupported
+                excludePatterns
+                includePatterns
             }
         }
         """
@@ -285,6 +418,10 @@ class SettingsScreen(PageScreen):
             # Update preview
             template_form = self.query_one(TargetTemplateForm)
             template_form.update_preview(template)
+
+            # Load filter patterns
+            self.query_one("#include-patterns-editor", PatternListEditor).patterns = config.get("includePatterns", [])
+            self.query_one("#exclude-patterns-editor", PatternListEditor).patterns = config.get("excludePatterns", [])
 
             self._show_status("✓ Configuration loaded", "success")
             # Auto-hide after 2 seconds
@@ -320,38 +457,25 @@ class SettingsScreen(PageScreen):
 
     @on(Button.Pressed, "#save-btn")
     async def on_save_pressed(self) -> None:
-        """Handle save button press."""
-        switch = self.query_one("#auto-backup-switch", Switch)
-        input_field = self.query_one("#target-template-input", Input)
-
-        auto_enabled = switch.value if self._auto_backup_supported else False
-        target_template = input_field.value.strip()
-
-        self._show_status("⏳ Saving...", "info")
-        logger.info("Saving config: autoBackupEnabled=%s, autoBackupTargetPath=%s", auto_enabled, target_template)
-
-        client = self.app.client
-        mutation = """
-        mutation UpdateConfig($config: ConfigInput!) {
-            updateConfig(config: $config)
-        }
-        """
+        """Save all settings to backend."""
         config_input = {
-            "autoBackupEnabled": auto_enabled,
-            "autoBackupTargetPath": target_template,
+            "autoBackupEnabled": self.query_one("#auto-backup-switch", Switch).value if self._auto_backup_supported else False,
+            "autoBackupTargetPath": self.query_one("#target-template-input", Input).value.strip(),
+            "includePatterns": self.query_one("#include-patterns-editor", PatternListEditor).patterns,
+            "excludePatterns": self.query_one("#exclude-patterns-editor", PatternListEditor).patterns,
         }
+        self._show_status("⏳ Saving...", "info")
+        logger.info("Saving config: %s", config_input)
+
+        mutation = "mutation UpdateConfig($config: ConfigInput!) { updateConfig(config: $config) }"
         try:
-            result = await client.execute(mutation, variable_values={"config": config_input})
+            result = await self.app.client.execute(mutation, variable_values={"config": config_input})
             if result.get("updateConfig"):
                 logger.info("Config saved successfully")
-                self._original_config = {
-                    "autoBackupEnabled": auto_enabled,
-                    "autoBackupTargetPath": target_template,
-                }
+                self._original_config = {**config_input, "autoBackupSupported": self._auto_backup_supported}
                 self._show_status("✓ Settings saved successfully!", "success")
                 self.notify("Settings saved", title="Success", severity="information")
             else:
-                logger.warning("Config mutation returned False")
                 self._show_status("⚠️ Settings may not have been saved", "info")
         except Exception as e:
             logger.error("Failed to save config: %s", e)
@@ -360,18 +484,39 @@ class SettingsScreen(PageScreen):
 
     @on(Button.Pressed, "#reset-btn")
     def on_reset_pressed(self) -> None:
-        """Handle reset button press."""
-        switch = self.query_one("#auto-backup-switch", Switch)
-        input_field = self.query_one("#target-template-input", Input)
-
-        switch.value = self._original_config.get("autoBackupEnabled", False) and self._auto_backup_supported
+        """Reset all fields to last saved values."""
+        self.query_one("#auto-backup-switch", Switch).value = (
+            self._original_config.get("autoBackupEnabled", False) and self._auto_backup_supported
+        )
         template = self._original_config.get("autoBackupTargetPath", "")
-        input_field.value = template
-
-        template_form = self.query_one(TargetTemplateForm)
-        template_form.update_preview(template)
-
+        self.query_one("#target-template-input", Input).value = template
+        self.query_one(TargetTemplateForm).update_preview(template)
+        self.query_one("#include-patterns-editor", PatternListEditor).patterns = self._original_config.get("includePatterns", [])
+        self.query_one("#exclude-patterns-editor", PatternListEditor).patterns = self._original_config.get("excludePatterns", [])
         self._show_status("↺ Reset to last saved values", "info")
+
+    @on(Button.Pressed, ".pattern-add-btn")
+    def on_pattern_add_pressed(self, event: Button.Pressed) -> None:
+        """Handle adding a pattern to include or exclude list."""
+        editor = event.button.ancestors_with_self[2]  # Button -> HorizontalGroup -> PatternListEditor
+        if not isinstance(editor, PatternListEditor):
+            return
+        input_field = editor.query_one(".pattern-input", Input)
+        if editor.add_pattern(input_field.value):
+            input_field.value = ""
+        elif input_field.value.strip():
+            self.notify("Pattern already exists", severity="warning")
+
+    @on(Button.Pressed, ".pattern-remove-btn")
+    def on_pattern_remove_pressed(self, event: Button.Pressed) -> None:
+        """Handle removing a pattern from include or exclude list."""
+        button_id = event.button.id or ""
+        for prefix in ("remove-include-patterns-", "remove-exclude-patterns-"):
+            if button_id.startswith(prefix):
+                pattern = button_id[len(prefix):]
+                editor_id = "#" + prefix.replace("remove-", "").rstrip("-") + "-editor"
+                self.query_one(editor_id, PatternListEditor).remove_pattern(pattern)
+                break
 
     def _update_auto_backup_visibility(self, supported: bool) -> None:
         """Toggle auto backup UI based on backend support."""
