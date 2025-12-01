@@ -7,7 +7,6 @@ import os
 import platform
 import shutil
 import subprocess
-import uuid
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -169,17 +168,15 @@ class BackupManager:
             if device is None:
                 raise ValueError(f"Device not found: {source}")
             mount = await self.mount_device(device)
-            return await self._backup_from_mount(mount, target_path, BackupType.MANUAL)
+            task = BackupTaskDTO.new(source=mount.path, target=str(target_path), backup_type=BackupType.MANUAL)
+            return await self._enqueue_backup(task, cleanup=self._unmount_cleanup(mount) if mount.owned else None)
 
         # Regular directory/file backup
         source_path = source_path.expanduser().resolve()
         if not source_path.exists():
             raise FileNotFoundError(f"Source path {source_path} does not exist.")
-        return await self._enqueue_backup(
-            source=source_path,
-            target=target_path,
-            backup_type=BackupType.MANUAL,
-        )
+        task = BackupTaskDTO.new(source=str(source_path), target=str(target_path), backup_type=BackupType.MANUAL)
+        return await self._enqueue_backup(task)
 
     async def cancel_backup(self, backup_id: str) -> bool:
         running = self._active.get(backup_id)
@@ -228,29 +225,17 @@ class BackupManager:
             return None
         mount = await self.mount_device(device)
         target_path = await self.resolve_target_path(device, mount.path, config.auto_backup_target_path)
-        return await self._backup_from_mount(mount, Path(target_path), BackupType.AUTO)
-
-    async def _backup_from_mount(
-        self,
-        mount: MountHandle,
-        target: Path,
-        backup_type: BackupType,
-    ) -> str:
-        """Shared device backup logic: backup from mount point with unmount cleanup."""
-        cleanup: Callable[[BackupStatus], Awaitable[None]] | None = None
-        if mount.owned:
-            cleanup = lambda _: self._unmount_path(mount.path)
+        task = BackupTaskDTO.new(source=mount.path, target=target_path, backup_type=BackupType.AUTO)
+        cleanup = self._unmount_cleanup(mount) if mount.owned else None
         try:
-            return await self._enqueue_backup(
-                source=Path(mount.path),
-                target=target,
-                backup_type=backup_type,
-                cleanup=cleanup,
-            )
+            return await self._enqueue_backup(task, cleanup=cleanup)
         except Exception:
             if cleanup:
                 await cleanup(BackupStatus.FAILED)
             raise
+
+    def _unmount_cleanup(self, mount: MountHandle) -> Callable[[BackupStatus], Awaitable[None]]:
+        return lambda _: self._unmount_path(mount.path)
 
     async def mount_device(self, device: pyudev.Device) -> MountHandle:
         device_node = device.device_node
@@ -349,38 +334,21 @@ class BackupManager:
     # ------------------------------------------------------------------ #
     async def _enqueue_backup(
         self,
-        *,
-        source: Path,
-        target: Path,
-        backup_type: BackupType,
+        task: BackupTaskDTO,
         cleanup: Callable[[BackupStatus], Awaitable[None]] | None = None,
     ) -> str:
-        size_total = await asyncio.to_thread(self._calculate_size_total, source)
-        backup_id = uuid.uuid4().hex
-        logger.debug("Creating task record for backup %s", backup_id)
-        await self._tasks.create(
-            backup_id=backup_id,
-            source=str(source),
-            target=str(target),
-            status=BackupStatus.PENDING,
-            backup_type=backup_type,
-            size_total=size_total,
-        )
+        size_total = await asyncio.to_thread(self._calculate_size_total, Path(task.source))
+        task = task.with_size_total(size_total)
+        logger.debug("Creating task record for backup %s", task.backup_id)
+        await self._tasks.create(task)
         await self._publish_task_update()
 
-        logger.debug("Enqueuing backup %s", backup_id)
+        logger.debug("Enqueuing backup %s", task.backup_id)
         running = RunningBackup(cleanup=cleanup, parser=RsyncOutputParser(), size_total=size_total)
-        self._active[backup_id] = running
-        job = asyncio.create_task(
-            self._run_backup(
-                backup_id=backup_id,
-                source=source,
-                target=target,
-                size_total=size_total,
-            )
-        )
-        self._track_background_task(backup_id, job)
-        return backup_id
+        self._active[task.backup_id] = running
+        job = asyncio.create_task(self._run_backup(task))
+        self._track_background_task(task.backup_id, job)
+        return task.backup_id
 
     def _track_background_task(self, backup_id: str, task: asyncio.Task) -> None:
         self._background_tasks.add(task)
@@ -393,36 +361,33 @@ class BackupManager:
 
         task.add_done_callback(_done_callback)
 
-    async def _run_backup(self, *, backup_id: str, source: Path, target: Path, size_total: int) -> None:
-        logger.debug("Background coroutine started for backup %s", backup_id)
-        running = self._active[backup_id]
-        if size_total and size_total > 0:
-            running.size_total = size_total
+    async def _run_backup(self, task: BackupTaskDTO) -> None:
+        logger.debug("Background coroutine started for backup %s", task.backup_id)
+        running = self._active[task.backup_id]
+        if task.size_total > 0:
+            running.size_total = task.size_total
         cleanup_cb = running.cleanup
         final_status: BackupStatus | None = None
         started_at = datetime.datetime.utcnow()
-        logger.debug("Backup %s transitioning to IN_PROGRESS", backup_id)
-        await self._tasks.update_status(
-            backup_id,
-            status=BackupStatus.IN_PROGRESS,
-            started_at=started_at,
-        )
+        logger.debug("Backup %s transitioning to IN_PROGRESS", task.backup_id)
+        await self._tasks.update_status(task.backup_id, status=BackupStatus.IN_PROGRESS, started_at=started_at)
         await self._publish_task_update()
-        logger.debug("Backup %s marked IN_PROGRESS", backup_id)
+        logger.debug("Backup %s marked IN_PROGRESS", task.backup_id)
 
+        target = Path(task.target)
         await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
 
         if running.cancel_requested:
-            await self._finish_backup(backup_id, BackupStatus.CANCELLED, started_at, cleanup_cb)
+            await self._finish_backup(task.backup_id, BackupStatus.CANCELLED, started_at, cleanup_cb)
             return
 
         process: asyncio.subprocess.Process | None = None
         consumer: asyncio.Task | None = None
         returncode: int | None = None
         try:
-            process = await self._launch_rsync(source, target)
+            process = await self._launch_rsync(Path(task.source), target)
             running.process = process
-            consumer = asyncio.create_task(self._consume_rsync_output(backup_id, process.stdout, running))
+            consumer = asyncio.create_task(self._consume_rsync_output(task.backup_id, process.stdout, running))
             returncode = await process.wait()
             await consumer
             consumer = None
@@ -430,7 +395,7 @@ class BackupManager:
             running.cancel_requested = True
             final_status = BackupStatus.CANCELLED
         except Exception as exc:
-            logger.exception("Backup %s failed: %s", backup_id, exc)
+            logger.exception("Backup %s failed: %s", task.backup_id, exc)
             final_status = BackupStatus.FAILED
         finally:
             if consumer:
@@ -445,7 +410,7 @@ class BackupManager:
                 final_status = BackupStatus.COMPLETED
             else:
                 final_status = BackupStatus.FAILED
-        await self._finish_backup(backup_id, final_status, started_at, cleanup_cb)
+        await self._finish_backup(task.backup_id, final_status, started_at, cleanup_cb)
 
     async def _finish_backup(
         self,

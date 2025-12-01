@@ -34,27 +34,18 @@ class TaskStore:
                 return None
             return self._record_to_dto(record)
 
-    async def create(
-        self,
-        *,
-        backup_id: str,
-        source: str,
-        target: str,
-        status: BackupStatus,
-        backup_type: BackupType,
-        size_total: int,
-    ) -> None:
+    async def create(self, task: BackupTaskDTO) -> None:
         created_at = datetime.datetime.utcnow()
         async with session_scope() as session:
             record = BackupTaskRecord(
-                backup_id=backup_id,
-                source=source,
-                target=target,
-                status=status.value,
-                type=backup_type.value,
+                backup_id=task.backup_id,
+                source=task.source,
+                target=task.target,
+                status=task.status.value,
+                type=task.type.value,
                 started_at=created_at,
                 finished_at=None,
-                size_total=size_total,
+                size_total=task.size_total,
                 size_completed=0,
             )
             session.add(record)
