@@ -104,11 +104,10 @@ class BackupManager:
         self._active: dict[str, RunningBackup] = {}
         self._background_tasks: set[asyncio.Task] = set()
         self._progress = ProgressBus()
-        self._tasks = TaskStore()
 
     async def fail_stale_tasks(self) -> int:
         """Mark all PENDING/IN_PROGRESS tasks as FAILED on startup (stale from previous run)."""
-        count = await self._tasks.fail_stale_tasks([BackupStatus.PENDING, BackupStatus.IN_PROGRESS])
+        count = await TaskStore.fail_stale_tasks([BackupStatus.PENDING, BackupStatus.IN_PROGRESS])
         if count > 0:
             logger.info("Marked %d stale tasks as failed from previous run", count)
         return count
@@ -174,10 +173,10 @@ class BackupManager:
         return iterator()
 
     async def list_tasks(self, limit: int = 20, offset: int = 0) -> list[BackupTaskDTO]:
-        return await self._tasks.list(limit=limit, offset=offset)
+        return await TaskStore.list(limit=limit, offset=offset)
 
     async def get_task(self, backup_id: str) -> BackupTaskDTO | None:
-        return await self._tasks.get(backup_id)
+        return await TaskStore.get(backup_id)
 
     # ------------------------------------------------------------------ #
     # Auto backup entry point (used by DeviceMonitor)
@@ -273,7 +272,7 @@ class BackupManager:
         size_total = await asyncio.to_thread(calculate_size, Path(task.source))
         task = task.with_size_total(size_total)
         logger.debug("Creating task record for backup %s", task.backup_id)
-        await self._tasks.create(task)
+        await TaskStore.create(task)
         await self._publish_task_update()
 
         logger.debug("Enqueuing backup %s", task.backup_id)
@@ -301,7 +300,7 @@ class BackupManager:
         cleanup_cb = running.cleanup
         final_status: BackupStatus | None = None
         started_at = datetime.datetime.utcnow()
-        await self._tasks.update_status(task.backup_id, status=BackupStatus.IN_PROGRESS, started_at=started_at)
+        await TaskStore.update_status(task.backup_id, status=BackupStatus.IN_PROGRESS, started_at=started_at)
         await self._publish_task_update()
 
         target = Path(task.target)
@@ -341,7 +340,7 @@ class BackupManager:
             final_status = BackupStatus.CANCELLED
 
         # Finalize task and publish progress
-        progress_payload = await self._tasks.finalize(task.backup_id, status=final_status, started_at=started_at)
+        progress_payload = await TaskStore.finalize(task.backup_id, status=final_status, started_at=started_at)
         if progress_payload:
             await self._progress.publish(task.backup_id, *progress_payload)
         await self._publish_task_update()
@@ -441,7 +440,7 @@ class BackupManager:
         size_total_hint: int | None = None,
         force_publish: bool = False,
     ) -> None:
-        progress_payload = await self._tasks.update_progress(
+        progress_payload = await TaskStore.update_progress(
             backup_id,
             size_completed=size_completed,
             size_total_hint=size_total_hint,

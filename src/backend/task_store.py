@@ -13,7 +13,8 @@ from backend.models import BackupStatus, BackupTaskDTO, BackupType
 class TaskStore:
     """Encapsulates all persistence logic for backup tasks."""
 
-    async def fail_stale_tasks(self, stale_statuses: Sequence[BackupStatus]) -> int:
+    @classmethod
+    async def fail_stale_tasks(cls, stale_statuses: Sequence[BackupStatus]) -> int:
         stale_values = [status.value for status in stale_statuses]
         now = datetime.datetime.utcnow()
         async with session_scope() as session:
@@ -21,20 +22,21 @@ class TaskStore:
             result = await session.execute(stmt)
             return result.rowcount
 
-    async def list(self, limit: int = 20, offset: int = 0) -> list[BackupTaskDTO]:
+    @classmethod
+    async def list(cls, limit: int = 20, offset: int = 0) -> list[BackupTaskDTO]:
         async with session_scope() as session:
             stmt = select(BackupTaskRecord).order_by(BackupTaskRecord.id.desc()).offset(offset).limit(limit)
             records = (await session.execute(stmt)).scalars().all()
-            return [self._record_to_dto(record) for record in records]
+            return [cls._record_to_dto(record) for record in records]
 
-    async def get(self, backup_id: str) -> Optional[BackupTaskDTO]:
+    @classmethod
+    async def get(cls, backup_id: str) -> Optional[BackupTaskDTO]:
         async with session_scope() as session:
-            record = await self._fetch_record(session, backup_id)
-            if record is None:
-                return None
-            return self._record_to_dto(record)
+            record = await cls._fetch_record(session, backup_id)
+            return cls._record_to_dto(record) if record else None
 
-    async def create(self, task: BackupTaskDTO) -> None:
+    @classmethod
+    async def create(cls, task: BackupTaskDTO) -> None:
         created_at = datetime.datetime.utcnow()
         async with session_scope() as session:
             record = BackupTaskRecord(
@@ -50,15 +52,10 @@ class TaskStore:
             )
             session.add(record)
 
-    async def update_status(
-        self,
-        backup_id: str,
-        *,
-        status: BackupStatus,
-        started_at: Optional[datetime.datetime] = None,
-    ) -> None:
+    @classmethod
+    async def update_status(cls, backup_id: str, *, status: BackupStatus, started_at: Optional[datetime.datetime] = None) -> None:
         async with session_scope() as session:
-            record = await self._fetch_record(session, backup_id)
+            record = await cls._fetch_record(session, backup_id)
             if record is None:
                 return
             record.status = status.value
@@ -66,16 +63,11 @@ class TaskStore:
                 record.started_at = started_at
             session.add(record)
 
-    async def finalize(
-        self,
-        backup_id: str,
-        *,
-        status: BackupStatus,
-        started_at: datetime.datetime,
-    ) -> Optional[tuple[int, int]]:
+    @classmethod
+    async def finalize(cls, backup_id: str, *, status: BackupStatus, started_at: datetime.datetime) -> Optional[tuple[int, int]]:
         finished_at = datetime.datetime.utcnow()
         async with session_scope() as session:
-            record = await self._fetch_record(session, backup_id)
+            record = await cls._fetch_record(session, backup_id)
             if record is None:
                 return None
             record.status = status.value
@@ -86,8 +78,9 @@ class TaskStore:
             session.add(record)
             return record.size_completed, record.size_total
 
+    @classmethod
     async def update_progress(
-        self,
+        cls,
         backup_id: str,
         *,
         size_completed: Optional[int],
@@ -96,7 +89,7 @@ class TaskStore:
     ) -> Optional[tuple[int, int]]:
         updated = False
         async with session_scope() as session:
-            record = await self._fetch_record(session, backup_id)
+            record = await cls._fetch_record(session, backup_id)
             if record is None:
                 return None
 
@@ -120,12 +113,14 @@ class TaskStore:
             return size_completed_value, size_total_value
         return None
 
-    async def _fetch_record(self, session: AsyncSession, backup_id: str) -> Optional[BackupTaskRecord]:
+    @classmethod
+    async def _fetch_record(cls, session: AsyncSession, backup_id: str) -> Optional[BackupTaskRecord]:
         stmt = select(BackupTaskRecord).where(BackupTaskRecord.backup_id == backup_id)
         result = await session.execute(stmt)
         return result.scalars().one_or_none()
 
-    def _record_to_dto(self, record: BackupTaskRecord) -> BackupTaskDTO:
+    @classmethod
+    def _record_to_dto(cls, record: BackupTaskRecord) -> BackupTaskDTO:
         return BackupTaskDTO(
             backup_id=record.backup_id,
             source=record.source,
