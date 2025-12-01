@@ -32,9 +32,8 @@ type Device {
 }
 
 type Config {
-  autoBackupEnabled: Boolean
-  autoBackupTargetPath: String  # path with template variables
-  autoBackupSupported: Boolean!  # true only when backend runs on Linux
+  autoBackupEnabled: Boolean!
+  autoBackupTargetPath: String!
   excludePatterns: [String!]!  # rsync exclude patterns (e.g., ["*.tmp", ".DS_Store"])
   includePatterns: [String!]!  # rsync include patterns (processed first)
 }
@@ -47,6 +46,7 @@ input ConfigInput {
 }
 
 type Query {
+  autoBackupSupported: Boolean!  # true only when backend runs on Linux
   config: Config!
   backupTasks(limit: Int, offset: Int): [BackupTask!]!
   backupTask(backupId: ID!): BackupTask

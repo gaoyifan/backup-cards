@@ -18,13 +18,12 @@ The SD Backup Tool exposes a GraphQL API served by FastAPI. The API is available
 ### Types
 
 #### Config
-Configuration object.
+Configuration object for user-defined settings.
 
 ```graphql
 type Config {
   autoBackupEnabled: Boolean!
   autoBackupTargetPath: String!
-  autoBackupSupported: Boolean!
   excludePatterns: [String!]!
   includePatterns: [String!]!
 }
@@ -33,7 +32,6 @@ type Config {
 **Fields:**
 - `autoBackupEnabled`: Whether automatic backup on device insertion is enabled
 - `autoBackupTargetPath`: Target path template with variables like `{date}`, `{uuid_short}`
-- `autoBackupSupported`: Whether auto backup is supported (true only on Linux)
 - `excludePatterns`: List of rsync exclude patterns (e.g., `["*.tmp", ".DS_Store"]`)
 - `includePatterns`: List of rsync include patterns (processed first)
 
@@ -62,6 +60,30 @@ type LogEntry {
 
 ### Queries
 
+#### autoBackupSupported
+Check if auto backup is supported on this platform.
+
+```graphql
+query {
+  autoBackupSupported
+}
+```
+
+**Returns:** `Boolean!`
+
+**Example Response:**
+```json
+{
+  "data": {
+    "autoBackupSupported": true
+  }
+}
+```
+
+**Notes:**
+- Returns `true` only when running on Linux (requires pyudev for device monitoring)
+- This is a read-only system capability, not a user configuration
+
 #### config
 Get current configuration.
 
@@ -70,7 +92,6 @@ query {
   config {
     autoBackupEnabled
     autoBackupTargetPath
-    autoBackupSupported
     excludePatterns
     includePatterns
   }
@@ -86,7 +107,6 @@ query {
     "config": {
       "autoBackupEnabled": true,
       "autoBackupTargetPath": "~/sd-backups/{date}-{uuid_short}",
-      "autoBackupSupported": true,
       "excludePatterns": [".DS_Store", "Thumbs.db", "*.tmp"],
       "includePatterns": []
     }

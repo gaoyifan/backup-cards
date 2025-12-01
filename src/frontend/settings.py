@@ -384,14 +384,12 @@ class SettingsScreen(PageScreen):
 
     async def _load_config(self) -> None:
         """Load current configuration."""
-        client = self.app.client
-
         query = """
         query {
+            autoBackupSupported
             config {
                 autoBackupEnabled
                 autoBackupTargetPath
-                autoBackupSupported
                 excludePatterns
                 includePatterns
             }
@@ -399,32 +397,25 @@ class SettingsScreen(PageScreen):
         """
         try:
             logger.debug("Loading configuration")
-            result = await client.execute(query)
+            result = await self.app.client.execute(query)
             config = result.get("config", {})
-            logger.debug("Loaded config: %s", config)
+            self._auto_backup_supported = result.get("autoBackupSupported", True)
             self._original_config = config
-            self._auto_backup_supported = config.get("autoBackupSupported", True)
+            logger.debug("Loaded config: %s, autoBackupSupported: %s", config, self._auto_backup_supported)
 
             switch = self.query_one("#auto-backup-switch", Switch)
             switch.value = config.get("autoBackupEnabled", False)
             switch.disabled = not self._auto_backup_supported
-
             self._update_auto_backup_visibility(self._auto_backup_supported)
 
-            input_field = self.query_one("#target-template-input", Input)
             template = config.get("autoBackupTargetPath", "")
-            input_field.value = template
+            self.query_one("#target-template-input", Input).value = template
+            self.query_one(TargetTemplateForm).update_preview(template)
 
-            # Update preview
-            template_form = self.query_one(TargetTemplateForm)
-            template_form.update_preview(template)
-
-            # Load filter patterns
             self.query_one("#include-patterns-editor", PatternListEditor).patterns = config.get("includePatterns", [])
             self.query_one("#exclude-patterns-editor", PatternListEditor).patterns = config.get("excludePatterns", [])
 
             self._show_status("✓ Configuration loaded", "success")
-            # Auto-hide after 2 seconds
             asyncio.create_task(self._auto_hide_status())
         except Exception as e:
             logger.error("Failed to load config: %s", e)

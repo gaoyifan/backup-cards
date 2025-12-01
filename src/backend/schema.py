@@ -9,10 +9,10 @@ from typing import AsyncGenerator, List, Optional
 import strawberry
 
 from backend.backup import BackupManager, task_event_bus
-from backend.utils import auto_backup_supported
 from backend.config import Config, get_config, update_config
 from backend.devices import device_event_bus, list_available_devices
 from backend.models import BackupStatus, BackupTaskDTO, BackupType, DeviceInfo
+from backend.utils import auto_backup_supported
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +20,6 @@ backup_manager = BackupManager()
 
 BackupStatusEnum = strawberry.enum(BackupStatus, name="BackupStatus")
 BackupTypeEnum = strawberry.enum(BackupType, name="BackupType")
-
-
-@strawberry.type
-class ConfigType:
-    auto_backup_enabled: bool = strawberry.field(name="autoBackupEnabled")
-    auto_backup_target_path: str = strawberry.field(name="autoBackupTargetPath")
-    auto_backup_supported: bool = strawberry.field(name="autoBackupSupported")
-    exclude_patterns: List[str] = strawberry.field(name="excludePatterns")
-    include_patterns: List[str] = strawberry.field(name="includePatterns")
 
 
 @strawberry.input
@@ -62,16 +53,6 @@ class BackupProgressType:
 class DeviceType:
     device_path: str = strawberry.field(name="devicePath")
     mount_point: Optional[str] = strawberry.field(name="mountPoint")
-
-
-def _config_to_type(config: Config) -> ConfigType:
-    return ConfigType(
-        auto_backup_enabled=config.auto_backup_enabled,
-        auto_backup_target_path=config.auto_backup_target_path,
-        auto_backup_supported=auto_backup_supported(),
-        exclude_patterns=config.exclude_patterns,
-        include_patterns=config.include_patterns,
-    )
 
 
 def _task_to_type(task: BackupTaskDTO) -> BackupTaskType:
@@ -110,9 +91,13 @@ def _safe_list_directory(path: str) -> List[str]:
 @strawberry.type
 class Query:
     @strawberry.field
-    async def config(self) -> ConfigType:
-        runtime_config = await get_config()
-        return _config_to_type(runtime_config)
+    async def config(self) -> Config:
+        return await get_config()
+
+    @strawberry.field(name="autoBackupSupported")
+    def auto_backup_supported(self) -> bool:
+        """Whether auto backup is supported (Linux only)."""
+        return auto_backup_supported()
 
     @strawberry.field
     async def backup_tasks(self, limit: int = 20, offset: int = 0) -> List[BackupTaskType]:
