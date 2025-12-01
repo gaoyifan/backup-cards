@@ -2,6 +2,7 @@
 
 import socket
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -30,4 +31,29 @@ def find_free_port() -> int:
 def free_port():
     """Fixture to provide a free port."""
     return find_free_port()
+
+
+@pytest.fixture
+async def fresh_db():
+    """Fixture that provides a fresh database for each test.
+    
+    Resets the global database state before and after each test.
+    """
+    import backend.db as db_module
+
+    # Reset globals
+    db_module._engine = None
+    db_module._SessionFactory = None
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = str(Path(tmpdir) / "test.db")
+        await db_module.init_db(db_path)
+        await db_module.create_schema()
+        yield db_path
+
+    # Cleanup after test
+    if db_module._engine:
+        await db_module._engine.dispose()
+    db_module._engine = None
+    db_module._SessionFactory = None
 
