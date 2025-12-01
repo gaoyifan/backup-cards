@@ -1,18 +1,12 @@
-"""Test real-time GraphQL subscriptions for backup tasks and devices."""
+"""Tests for real-time GraphQL subscriptions for backup tasks and devices."""
 
 import asyncio
-import os
 import re
 import subprocess
-import sys
 import tempfile
 import time
 
 import pytest
-
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.websockets import WebsocketsTransport
@@ -58,6 +52,7 @@ def _extract_port_from_process(process: subprocess.Popen, timeout: float = 5.0) 
 
 @pytest.fixture(scope="module")
 def subscription_env(tmp_path_factory):
+    """Fixture to set up a test server for subscription tests."""
     base_path = tmp_path_factory.mktemp("subscription")
     source_dir = base_path / "source"
     target_dir = base_path / "target"
@@ -296,85 +291,23 @@ async def _run_initial_task_state(ws_url: str):
     return True
 
 
-def test_initial_task_state(subscription_env):
-    asyncio.run(_run_initial_task_state(subscription_env["ws_url"]))
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_initial_task_state(subscription_env):
+    """Test that backupTasksUpdated emits initial state on connect."""
+    await _run_initial_task_state(subscription_env["ws_url"])
 
 
-def test_devices_subscription(subscription_env):
-    asyncio.run(_run_devices_subscription(subscription_env["ws_url"]))
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_devices_subscription(subscription_env):
+    """Test that devicesUpdated subscription emits initial state."""
+    await _run_devices_subscription(subscription_env["ws_url"])
 
 
-def test_tasks_subscription(subscription_env):
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_tasks_subscription(subscription_env):
+    """Test that backupTasksUpdated subscription receives updates."""
     env = subscription_env
-    asyncio.run(_run_tasks_subscription(env["ws_url"], env["http_url"], env["source_dir"], env["target_dir"]))
-
-
-async def run_tests(port: int, source_dir: str, target_dir: str):
-    """Run all subscription tests."""
-    ws_url = f"ws://127.0.0.1:{port}/graphql"
-    http_url = f"http://127.0.0.1:{port}/graphql"
-
-    print(f"Running subscription tests against port {port}")
-
-    # Wait for server
-    if not await wait_for_server(http_url):
-        raise RuntimeError("Server did not start in time")
-    print("Server is ready")
-
-    # Run tests
-    await _run_initial_task_state(ws_url)
-    await _run_devices_subscription(ws_url)
-    await _run_tasks_subscription(ws_url, http_url, source_dir, target_dir)
-
-    print("\nAll subscription tests PASSED!")
-
-
-def main():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = os.path.join(tmpdir, "test.db")
-        source_dir = os.path.join(tmpdir, "source")
-        target_dir = os.path.join(tmpdir, "target")
-
-        # Create test source directory with some files
-        os.makedirs(source_dir)
-        for i in range(3):
-            with open(os.path.join(source_dir, f"file{i}.txt"), "w") as f:
-                f.write(f"Test content {i}\n" * 10)
-
-        # Start server
-        process = subprocess.Popen(
-            [
-                "uv",
-                "run",
-                "python",
-                "app.py",
-                "daemon",
-                "127.0.0.1",
-                "0",  # Dynamic port
-                "--db-path",
-                db_path,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-
-        try:
-            port = _extract_port_from_process(process)
-            print(f"Detected server on port {port}")
-
-            # Run async tests
-            asyncio.run(run_tests(port, source_dir, target_dir))
-
-        finally:
-            process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-
-
-if __name__ == "__main__":
-    main()
+    await _run_tasks_subscription(env["ws_url"], env["http_url"], env["source_dir"], env["target_dir"])

@@ -31,3 +31,23 @@ fmt:
   uv run autoflake --remove-all-unused-imports --remove-unused-variables --recursive --in-place src tests
   uv run isort -l 150 src tests
   uv run black -l 150 src tests
+
+# Run all tests
+test:
+  uv run pytest
+
+# Run unit tests only (fast)
+test-unit:
+  uv run pytest -m "not integration"
+
+# Run integration tests only
+test-integration:
+  uv run pytest -m integration
+
+# Run specific test file
+test-file file:
+  uv run pytest tests/{{file}}
+
+# Run tests with coverage report
+test-cov:
+  uv run pytest --cov=src --cov-report=term-missing --cov-report=html

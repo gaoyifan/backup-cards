@@ -1,15 +1,21 @@
-import os
+"""Tests for logging functionality."""
+
 import subprocess
 import tempfile
 import time
+from pathlib import Path
+
+import pytest
 
 LOG_FILE = "test_sd_backup.log"
 
 
+@pytest.mark.integration
 def test_logging():
+    """Test that logging to file works correctly and doesn't leak to stdout/stderr."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        log_path = os.path.join(tmpdir, LOG_FILE)
-        db_path = os.path.join(tmpdir, "config.db")
+        log_path = Path(tmpdir) / LOG_FILE
+        db_path = Path(tmpdir) / "config.db"
 
         process = subprocess.Popen(
             [
@@ -18,12 +24,12 @@ def test_logging():
                 "python",
                 "app.py",
                 "--log-path",
-                log_path,
+                str(log_path),
                 "daemon",
                 "127.0.0.1",
                 "0",
                 "--db-path",
-                db_path,
+                str(db_path),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -40,20 +46,11 @@ def test_logging():
 
         stdout, stderr = process.communicate()
 
-        if not os.path.exists(log_path):
-            raise AssertionError("Log file not created.")
+        assert log_path.exists(), "Log file not created"
 
-        with open(log_path, "r") as f:
-            logs = f.read()
-            if "Starting SD Backup backend (daemon mode)" not in logs:
-                raise AssertionError("Expected backend logs in log file.")
+        logs = log_path.read_text()
+        assert "Starting SD Backup backend (daemon mode)" in logs, "Expected backend logs in log file"
 
-        if "Starting SD Backup backend (daemon mode)" in stdout:
-            raise AssertionError("Backend log message leaked to stdout.")
-
-        if "Starting SD Backup backend (daemon mode)" in stderr or "INFO:" in stderr:
-            raise AssertionError("Unexpected logs in stderr.")
-
-
-if __name__ == "__main__":
-    test_logging()
+        assert "Starting SD Backup backend (daemon mode)" not in stdout, "Backend log message leaked to stdout"
+        assert "Starting SD Backup backend (daemon mode)" not in stderr, "Backend log message leaked to stderr"
+        assert "INFO:" not in stderr, "Unexpected logs in stderr"

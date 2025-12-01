@@ -17,3 +17,8 @@ wheels/
 
 # PyInstaller
 *.spec
+
+# Coverage
+coverage.xml
+htmlcov/
+.coverage

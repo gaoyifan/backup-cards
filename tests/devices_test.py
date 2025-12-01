@@ -1,12 +1,16 @@
+"""Tests for device listing functionality."""
+
 import plistlib
 
 import psutil
+import pytest
 
 from backend import devices
 from backend.models import DeviceInfo
 
 
 def test_list_available_devices_macos(monkeypatch):
+    """Test listing devices on macOS."""
     monkeypatch.setattr(devices.platform, "system", lambda: "Darwin")
     fake_partition = psutil._common.sdiskpart("/dev/disk2s1", "/Volumes/USB", "exfat", "rw")
     monkeypatch.setattr(devices.psutil, "disk_partitions", lambda all=False: [fake_partition])
