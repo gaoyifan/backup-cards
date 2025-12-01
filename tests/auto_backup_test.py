@@ -24,7 +24,7 @@ class TestAutoBackup(unittest.IsolatedAsyncioTestCase):
             patch.object(backup_manager, "mount_device", AsyncMock(return_value=mount_handle)) as mock_mount,
             patch.object(
                 backup_manager,
-                "resolve_target_path",
+                "_resolve_target_path",
                 AsyncMock(return_value="/data/backups"),
             ) as mock_resolve,
             patch.object(type(backup_manager), "_enqueue_backup", AsyncMock(return_value="abc123")) as mock_enqueue,

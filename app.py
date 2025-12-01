@@ -18,7 +18,7 @@ from asyncer import syncify
 from textual_serve.server import Server
 import webview
 
-from backend.backup import check_rsync_available
+from backend.utils import check_rsync_available
 from backend.config import init_config_store
 from backend.server import app
 from frontend.app import SDBackupApp

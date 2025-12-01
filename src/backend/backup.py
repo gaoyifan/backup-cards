@@ -4,8 +4,6 @@ import asyncio
 import datetime
 import logging
 import os
-import platform
-import shutil
 import subprocess
 from contextlib import suppress
 from dataclasses import dataclass
@@ -19,43 +17,12 @@ from backend.devices import get_device_by_path
 from backend.models import BackupStatus, BackupTaskDTO, BackupType
 from backend.rsync_parser import RsyncOutputParser
 from backend.task_store import TaskStore
+from backend.utils import auto_backup_supported, calculate_size, find_rsync, resolve_target_path
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MOUNT_ROOT = "/mnt"
 MOUNT_PREFIX = "sd-backup"
-
-
-def find_rsync() -> str:
-    """Return the preferred rsync binary path or empty string if not found."""
-    candidates = [
-        "/usr/local/bin/rsync",  # Homebrew (Intel)
-        "/opt/homebrew/bin/rsync",  # Homebrew (Apple Silicon)
-        "/usr/bin/rsync",  # macOS built-in (older)
-        shutil.which("rsync"),
-    ]
-    for candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            return candidate
-    return "rsync"
-
-
-def check_rsync_available() -> None:
-    """Check if rsync is available. Raises RuntimeError if not found."""
-    rsync_bin = find_rsync()
-    if not rsync_bin:
-        raise RuntimeError("rsync is required but not found. Please install rsync.")
-    try:
-        result = subprocess.run([rsync_bin, "--version"], capture_output=True, check=True, text=True)
-        version_line = result.stdout.split("\n", 1)[0]
-        logger.info("Using %s via %s", version_line, rsync_bin)
-    except FileNotFoundError as exc:
-        raise RuntimeError("rsync is required but not found. Please install rsync.") from exc
-
-
-def auto_backup_supported() -> bool:
-    """Return True if auto-backup is supported on this platform."""
-    return platform.system() == "Linux"
 
 
 class ProgressBus:
@@ -224,7 +191,7 @@ class BackupManager:
             logger.info("Auto backup disabled. Ignoring %s", device.device_node)
             return None
         mount = await self.mount_device(device)
-        target_path = await self.resolve_target_path(device, mount.path, config.auto_backup_target_path)
+        target_path = await self._resolve_target_path(device, mount.path, config.auto_backup_target_path)
         task = BackupTaskDTO.new(source=mount.path, target=target_path, backup_type=BackupType.AUTO)
         cleanup = self._unmount_cleanup(mount) if mount.owned else None
         try:
@@ -290,44 +257,10 @@ class BackupManager:
         except OSError as exc:
             logger.warning("Failed to remove mount directory %s: %s", mount_path, exc)
 
-    async def resolve_target_path(self, device: pyudev.Device, source_path: str, template: str) -> str:
+    async def _resolve_target_path(self, device: pyudev.Device, source_path: str, template: str) -> str:
         uuid_value = device.get("ID_FS_UUID", "unknown")
         fs_label = device.get("ID_FS_LABEL_ENC", "")
-        return await asyncio.to_thread(self._resolve_target_path_sync, uuid_value, fs_label, source_path, template)
-
-    def _resolve_target_path_sync(self, uuid_value: str, fs_label: str, source_path: str, template: str) -> str:
-        uuid_short = uuid_value[:4] if len(uuid_value) >= 4 else uuid_value
-        earliest_mtime = None
-        try:
-            for root, _, files in os.walk(source_path):
-                for name in files:
-                    filepath = os.path.join(root, name)
-                    try:
-                        mtime = os.path.getmtime(filepath)
-                    except OSError:
-                        continue
-                    if earliest_mtime is None or mtime < earliest_mtime:
-                        earliest_mtime = mtime
-        except Exception as exc:
-            logger.warning("Error scanning %s for timestamps: %s", source_path, exc)
-
-        if earliest_mtime:
-            dt = datetime.datetime.fromtimestamp(earliest_mtime)
-        else:
-            dt = datetime.datetime.now()
-
-        date_str = dt.strftime("%Y%m%d")
-        hour_str = dt.strftime("%H")
-        minute_str = dt.strftime("%M")
-        target_path = template.format(
-            date=date_str,
-            hour=hour_str,
-            minute=minute_str,
-            uuid=uuid_value,
-            uuid_short=uuid_short,
-            fs_label=fs_label,
-        )
-        return os.path.expanduser(target_path)
+        return await asyncio.to_thread(resolve_target_path, uuid_value, fs_label, source_path, template)
 
     # ------------------------------------------------------------------ #
     # Internal helpers
@@ -337,7 +270,7 @@ class BackupManager:
         task: BackupTaskDTO,
         cleanup: Callable[[BackupStatus], Awaitable[None]] | None = None,
     ) -> str:
-        size_total = await asyncio.to_thread(self._calculate_size_total, Path(task.source))
+        size_total = await asyncio.to_thread(calculate_size, Path(task.source))
         task = task.with_size_total(size_total)
         logger.debug("Creating task record for backup %s", task.backup_id)
         await self._tasks.create(task)
@@ -362,66 +295,64 @@ class BackupManager:
         task.add_done_callback(_done_callback)
 
     async def _run_backup(self, task: BackupTaskDTO) -> None:
-        logger.debug("Background coroutine started for backup %s", task.backup_id)
         running = self._active[task.backup_id]
         if task.size_total > 0:
             running.size_total = task.size_total
         cleanup_cb = running.cleanup
         final_status: BackupStatus | None = None
         started_at = datetime.datetime.utcnow()
-        logger.debug("Backup %s transitioning to IN_PROGRESS", task.backup_id)
         await self._tasks.update_status(task.backup_id, status=BackupStatus.IN_PROGRESS, started_at=started_at)
         await self._publish_task_update()
-        logger.debug("Backup %s marked IN_PROGRESS", task.backup_id)
 
         target = Path(task.target)
         await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
 
-        if running.cancel_requested:
-            await self._finish_backup(task.backup_id, BackupStatus.CANCELLED, started_at, cleanup_cb)
-            return
-
-        process: asyncio.subprocess.Process | None = None
-        consumer: asyncio.Task | None = None
-        returncode: int | None = None
-        try:
-            process = await self._launch_rsync(Path(task.source), target)
-            running.process = process
-            consumer = asyncio.create_task(self._consume_rsync_output(task.backup_id, process.stdout, running))
-            returncode = await process.wait()
-            await consumer
-            consumer = None
-        except asyncio.CancelledError:
-            running.cancel_requested = True
-            final_status = BackupStatus.CANCELLED
-        except Exception as exc:
-            logger.exception("Backup %s failed: %s", task.backup_id, exc)
-            final_status = BackupStatus.FAILED
-        finally:
-            if consumer:
-                consumer.cancel()
-                with suppress(asyncio.CancelledError):
-                    await consumer
-
-        if final_status is None:
-            if running.cancel_requested:
+        if not running.cancel_requested:
+            process: asyncio.subprocess.Process | None = None
+            consumer: asyncio.Task | None = None
+            returncode: int | None = None
+            try:
+                process = await self._launch_rsync(Path(task.source), target)
+                running.process = process
+                consumer = asyncio.create_task(self._consume_rsync_output(task.backup_id, process.stdout, running))
+                returncode = await process.wait()
+                await consumer
+                consumer = None
+            except asyncio.CancelledError:
+                running.cancel_requested = True
                 final_status = BackupStatus.CANCELLED
-            elif returncode == 0:
-                final_status = BackupStatus.COMPLETED
-            else:
+            except Exception as exc:
+                logger.exception("Backup %s failed: %s", task.backup_id, exc)
                 final_status = BackupStatus.FAILED
-        await self._finish_backup(task.backup_id, final_status, started_at, cleanup_cb)
+            finally:
+                if consumer:
+                    consumer.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await consumer
 
-    async def _finish_backup(
-        self,
-        backup_id: str,
-        final_status: BackupStatus,
-        started_at: datetime.datetime,
-        cleanup_cb: Callable[[BackupStatus], Awaitable[None]] | None,
-    ) -> None:
-        await self._finalize_task(backup_id, final_status, started_at)
+            if final_status is None:
+                if running.cancel_requested:
+                    final_status = BackupStatus.CANCELLED
+                elif returncode == 0:
+                    final_status = BackupStatus.COMPLETED
+                else:
+                    final_status = BackupStatus.FAILED
+        else:
+            final_status = BackupStatus.CANCELLED
+
+        # Finalize task and publish progress
+        progress_payload = await self._tasks.finalize(task.backup_id, status=final_status, started_at=started_at)
+        if progress_payload:
+            await self._progress.publish(task.backup_id, *progress_payload)
         await self._publish_task_update()
-        await self._complete_cleanup(backup_id, cleanup_cb, final_status)
+
+        # Cleanup
+        if cleanup_cb:
+            try:
+                await cleanup_cb(final_status)
+            except Exception as exc:
+                logger.warning("Cleanup hook failed: %s", exc)
+        self._active.pop(task.backup_id, None)
 
     async def _launch_rsync(self, source: Path, target: Path) -> asyncio.subprocess.Process:
         source_arg = f"{source}/" if source.is_dir() else str(source)
@@ -502,21 +433,6 @@ class BackupManager:
                 size_total_hint=size_total_hint,
             )
 
-    async def _finalize_task(
-        self,
-        backup_id: str,
-        status: BackupStatus,
-        started_at: datetime.datetime,
-    ) -> None:
-        progress_payload = await self._tasks.finalize(
-            backup_id,
-            status=status,
-            started_at=started_at,
-        )
-        if progress_payload:
-            size_completed, size_total = progress_payload
-            await self._progress.publish(backup_id, size_completed, size_total)
-
     async def _update_progress(
         self,
         backup_id: str,
@@ -535,39 +451,3 @@ class BackupManager:
             size_completed_value, size_total_value = progress_payload
             await self._progress.publish(backup_id, size_completed_value, size_total_value)
 
-    async def _complete_cleanup(
-        self,
-        backup_id: str,
-        cleanup_cb: Callable[[BackupStatus], Awaitable[None]] | None,
-        final_status: BackupStatus,
-    ) -> None:
-        if cleanup_cb:
-            await self._invoke_cleanup(cleanup_cb, final_status)
-        self._active.pop(backup_id, None)
-
-    async def _invoke_cleanup(
-        self,
-        cleanup_cb: Callable[[BackupStatus], Awaitable[None]],
-        final_status: BackupStatus,
-    ) -> None:
-        try:
-            await cleanup_cb(final_status)
-        except Exception as exc:
-            logger.warning("Cleanup hook for %s failed: %s", final_status.value, exc)
-
-    def _calculate_size_total(self, path: Path) -> int:
-        if path.is_file():
-            try:
-                return path.stat().st_size
-            except OSError:
-                return 0
-
-        total_size = 0
-        for root, _, files in os.walk(path):
-            for file_name in files:
-                file_path = Path(root) / file_name
-                try:
-                    total_size += file_path.stat().st_size
-                except OSError:
-                    continue
-        return total_size

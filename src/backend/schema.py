@@ -8,7 +8,8 @@ from typing import AsyncGenerator, List, Optional
 
 import strawberry
 
-from backend.backup import BackupManager, auto_backup_supported, task_event_bus
+from backend.backup import BackupManager, task_event_bus
+from backend.utils import auto_backup_supported
 from backend.config import Config, get_config, update_config
 from backend.devices import device_event_bus, list_available_devices
 from backend.models import BackupStatus, BackupTaskDTO, BackupType, DeviceInfo
