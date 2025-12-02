@@ -98,7 +98,7 @@ Available template variables:
 
 | Variable | Description |
 | --- | --- |
-| `{date}` | `YYYYMMDD` derived from the earliest file timestamp (fallback: current date). |
+| `{date}` | `YYYYMMDD` from the earliest file timestamp on/after 2020-01-01 (fallback: current date). |
 | `{hour}` / `{minute}` | Earliest modification time components. |
 | `{uuid}` | Full filesystem UUID. |
 | `{uuid_short}` | First four characters of the UUID. |

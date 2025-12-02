@@ -1,5 +1,6 @@
 """Tests for backend/utils.py utility functions."""
 
+import datetime
 import os
 import platform
 import tempfile
@@ -199,3 +200,25 @@ class TestResolveTargetPath:
                 template="/backup/{uuid_short}",
             )
             assert result == "/backup/AB"
+
+    def test_date_ignores_pre_2020_timestamps(self):
+        """Ensure {date} skips obviously invalid pre-2020 mtimes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_file = Path(tmpdir) / "old.txt"
+            old_file.write_text("old")
+            old_ts = datetime.datetime(2019, 6, 1, tzinfo=datetime.timezone.utc).timestamp()
+            os.utime(old_file, (old_ts, old_ts))
+
+            new_file = Path(tmpdir) / "new.txt"
+            new_file.write_text("new")
+            new_dt = datetime.datetime(2021, 3, 15, tzinfo=datetime.timezone.utc)
+            new_ts = new_dt.timestamp()
+            os.utime(new_file, (new_ts, new_ts))
+
+            result = resolve_target_path(
+                uuid_value="abcd",
+                fs_label="SD",
+                source_path=tmpdir,
+                template="/backup/{date}",
+            )
+            assert result == f"/backup/{new_dt.strftime('%Y%m%d')}"

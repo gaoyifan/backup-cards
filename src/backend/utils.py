@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MOUNT_ROOT = "/mnt"
 MOUNT_PREFIX = "sd-backup"
+MIN_TEMPLATE_TIMESTAMP = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc).timestamp()
 
 
 def find_rsync() -> str:
@@ -66,6 +67,8 @@ def resolve_target_path(uuid_value: str, fs_label: str, source_path: str, templa
             for name in files:
                 try:
                     mtime = os.path.getmtime(os.path.join(root, name))
+                    if mtime < MIN_TEMPLATE_TIMESTAMP:
+                        continue
                     if earliest_mtime is None or mtime < earliest_mtime:
                         earliest_mtime = mtime
                 except OSError:
