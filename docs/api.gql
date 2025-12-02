@@ -19,6 +19,8 @@ type BackupTask {
   type: BackupType!
   startedAt: DateTime!
   finishedAt: DateTime
+  sizeCompleted: Int!
+  sizeTotal: Int!
 }
 
 type BackupProgress {

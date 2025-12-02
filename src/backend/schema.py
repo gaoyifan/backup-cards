@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 backup_manager = BackupManager()
 
+BigInt = strawberry.scalar(
+    int,
+    name="BigInt",
+    description="Arbitrary-size integer used for large file sizes.",
+    serialize=lambda value: int(value),
+    parse_value=lambda value: int(value),
+)
+
 BackupStatusEnum = strawberry.enum(BackupStatus, name="BackupStatus")
 BackupTypeEnum = strawberry.enum(BackupType, name="BackupType")
 
@@ -39,14 +47,14 @@ class BackupTaskType:
     type: BackupTypeEnum
     started_at: datetime = strawberry.field(name="startedAt")
     finished_at: Optional[datetime] = strawberry.field(name="finishedAt")
-    size_total: int = strawberry.field(name="sizeTotal")
-    size_completed: int = strawberry.field(name="sizeCompleted")
+    size_total: BigInt = strawberry.field(name="sizeTotal")
+    size_completed: BigInt = strawberry.field(name="sizeCompleted")
 
 
 @strawberry.type
 class BackupProgressType:
-    size_completed: int = strawberry.field(name="sizeCompleted")
-    size_total: int = strawberry.field(name="sizeTotal")
+    size_completed: BigInt = strawberry.field(name="sizeCompleted")
+    size_total: BigInt = strawberry.field(name="sizeTotal")
 
 
 @strawberry.type
