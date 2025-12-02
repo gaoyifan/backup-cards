@@ -150,9 +150,7 @@ class PatternListEditor(containers.VerticalGroup):
         """Create a pattern item widget with remove button."""
         item = containers.HorizontalGroup(classes="pattern-item")
         item.compose_add_child(Label(f"  {pattern}", classes="pattern-text"))
-        item.compose_add_child(
-            Button("✕", classes="pattern-remove-btn", id=f"remove-{self._pattern_id}-{pattern}")
-        )
+        item.compose_add_child(Button("✕", classes="pattern-remove-btn", id=f"remove-{self._pattern_id}-{pattern}"))
         return item
 
     def _refresh_list(self) -> None:
@@ -476,9 +474,7 @@ class SettingsScreen(PageScreen):
     @on(Button.Pressed, "#reset-btn")
     def on_reset_pressed(self) -> None:
         """Reset all fields to last saved values."""
-        self.query_one("#auto-backup-switch", Switch).value = (
-            self._original_config.get("autoBackupEnabled", False) and self._auto_backup_supported
-        )
+        self.query_one("#auto-backup-switch", Switch).value = self._original_config.get("autoBackupEnabled", False) and self._auto_backup_supported
         template = self._original_config.get("autoBackupTargetPath", "")
         self.query_one("#target-template-input", Input).value = template
         self.query_one(TargetTemplateForm).update_preview(template)
@@ -504,7 +500,7 @@ class SettingsScreen(PageScreen):
         button_id = event.button.id or ""
         for prefix in ("remove-include-patterns-", "remove-exclude-patterns-"):
             if button_id.startswith(prefix):
-                pattern = button_id[len(prefix):]
+                pattern = button_id[len(prefix) :]
                 editor_id = "#" + prefix.replace("remove-", "").rstrip("-") + "-editor"
                 self.query_one(editor_id, PatternListEditor).remove_pattern(pattern)
                 break

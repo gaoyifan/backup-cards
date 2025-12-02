@@ -115,4 +115,3 @@ class TestDeviceInfo:
 
         assert device1 == device2
         assert device1 != device3
-

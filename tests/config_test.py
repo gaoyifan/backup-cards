@@ -2,14 +2,9 @@
 
 import pytest
 
-from backend.config import (
-    DEFAULT_AUTO_TEMPLATE,
-    Config,
-    _parse_patterns,
-    get_config,
-    update_config,
-)
-from backend.db import Config as ConfigTable, session_scope
+from backend.config import DEFAULT_AUTO_TEMPLATE, Config, _parse_patterns, get_config, update_config
+from backend.db import Config as ConfigTable
+from backend.db import session_scope
 
 
 class TestParsePatterns:
@@ -180,4 +175,3 @@ class TestConfigStore:
 
         assert updated.auto_backup_enabled is True
         assert updated.exclude_patterns == ["*.tmp"]
-

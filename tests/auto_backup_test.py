@@ -1,7 +1,8 @@
 """Tests for auto-backup functionality."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from backend.backup import MountHandle
 from backend.config import Config

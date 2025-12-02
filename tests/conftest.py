@@ -36,7 +36,7 @@ def free_port():
 @pytest.fixture
 async def fresh_db():
     """Fixture that provides a fresh database for each test.
-    
+
     Resets the global database state before and after each test.
     """
     import backend.db as db_module
@@ -56,4 +56,3 @@ async def fresh_db():
         await db_module._engine.dispose()
     db_module._engine = None
     db_module._SessionFactory = None
-

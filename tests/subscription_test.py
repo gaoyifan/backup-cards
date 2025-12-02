@@ -3,7 +3,6 @@
 import asyncio
 import re
 import subprocess
-import tempfile
 import time
 
 import pytest

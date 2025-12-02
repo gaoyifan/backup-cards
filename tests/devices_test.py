@@ -3,7 +3,6 @@
 import plistlib
 
 import psutil
-import pytest
 
 from backend import devices
 from backend.models import DeviceInfo

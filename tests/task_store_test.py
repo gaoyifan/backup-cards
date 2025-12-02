@@ -184,4 +184,3 @@ class TestTaskStore:
         assert t1.status == BackupStatus.FAILED
         assert t2.status == BackupStatus.FAILED
         assert t3.status == BackupStatus.COMPLETED  # Unchanged
-

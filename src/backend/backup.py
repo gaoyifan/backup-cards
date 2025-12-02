@@ -15,14 +15,7 @@ from backend.devices import get_device_by_path
 from backend.models import BackupStatus, BackupTaskDTO, BackupType
 from backend.rsync_parser import RsyncOutputParser
 from backend.task_store import TaskStore
-from backend.utils import (
-    auto_backup_supported,
-    calculate_size,
-    find_rsync,
-    mount_device,
-    resolve_target_path,
-    unmount_device,
-)
+from backend.utils import auto_backup_supported, calculate_size, find_rsync, mount_device, resolve_target_path, unmount_device
 
 logger = logging.getLogger(__name__)
 
@@ -198,9 +191,7 @@ class BackupManager:
             raise
 
     async def _mount_device(self, device: pyudev.Device) -> MountHandle:
-        path, owned = await asyncio.to_thread(
-            mount_device, device.device_node, device.get("ID_FS_UUID", "unknown")
-        )
+        path, owned = await asyncio.to_thread(mount_device, device.device_node, device.get("ID_FS_UUID", "unknown"))
         return MountHandle(path=path, owned=owned)
 
     # --- Internal ---
@@ -266,7 +257,11 @@ class BackupManager:
             config = await get_config()
 
             cmd = [
-                rsync_bin, "-a", "--stats", "--bwlimit=3m", "--info=progress2",
+                rsync_bin,
+                "-a",
+                "--stats",
+                "--bwlimit=3m",
+                "--info=progress2",
             ]
             # Add include patterns first (rsync processes rules in order)
             for pattern in config.include_patterns:
@@ -274,14 +269,14 @@ class BackupManager:
             # Add exclude patterns
             for pattern in config.exclude_patterns:
                 cmd.extend(["--exclude", pattern])
-            cmd.extend([
-                f"{source}/" if source.is_dir() else str(source),
-                f"{target}/" if target.is_dir() else str(target),
-            ])
-            logger.info("Launching rsync: %s", " ".join(cmd))
-            process = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            cmd.extend(
+                [
+                    f"{source}/" if source.is_dir() else str(source),
+                    f"{target}/" if target.is_dir() else str(target),
+                ]
             )
+            logger.info("Launching rsync: %s", " ".join(cmd))
+            process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             running.process = process
             consumer = asyncio.create_task(self._consume_rsync_output(task.backup_id, process.stdout, running))
             returncode = await process.wait()
@@ -303,9 +298,7 @@ class BackupManager:
                 with suppress(asyncio.CancelledError):
                     await consumer
 
-    async def _consume_rsync_output(
-        self, backup_id: str, stream: asyncio.StreamReader | None, running: RunningBackup
-    ) -> None:
+    async def _consume_rsync_output(self, backup_id: str, stream: asyncio.StreamReader | None, running: RunningBackup) -> None:
         if not stream:
             return
         buffer = ""

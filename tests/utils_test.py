@@ -4,17 +4,11 @@ import os
 import platform
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from backend.utils import (
-    auto_backup_supported,
-    calculate_size,
-    check_rsync_available,
-    find_rsync,
-    resolve_target_path,
-)
+from backend.utils import auto_backup_supported, calculate_size, check_rsync_available, find_rsync, resolve_target_path
 
 
 class TestFindRsync:
@@ -205,4 +199,3 @@ class TestResolveTargetPath:
                 template="/backup/{uuid_short}",
             )
             assert result == "/backup/AB"
-

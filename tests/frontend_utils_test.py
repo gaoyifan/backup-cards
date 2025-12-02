@@ -132,4 +132,3 @@ class TestFmtProgress:
         """Test formatting partial progress."""
         result = fmt_progress(256 * 1024, 1024 * 1024)
         assert "25.0%" in result
-
