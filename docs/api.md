@@ -31,7 +31,7 @@ type Config {
 
 **Fields:**
 - `autoBackupEnabled`: Whether automatic backup on device insertion is enabled
-- `autoBackupTargetPath`: Target path template with variables like `{date}`, `{uuid_short}`
+- `autoBackupTargetPath`: Target path template with variables like `{date}`, `{uuid_short}`, `{model}`
 - `excludePatterns`: List of rsync exclude patterns (e.g., `["*.tmp", ".DS_Store"]`)
 - `includePatterns`: List of rsync include patterns (processed first)
 

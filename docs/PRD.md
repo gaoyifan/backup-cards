@@ -37,6 +37,9 @@ The system supports dynamic target path generation using the following variables
 *   `{minute}`: The minute (`MM`) derived from the earliest modification time.
 *   `{uuid}`: The full filesystem UUID of the device.
 *   `{uuid_short}`: The first 4 characters of the device UUID.
+*   `{model}`: Camera model detected via `exiftool` (images prioritized over videos; falls back to `UNKNOWN`).
+
+> `{model}` requires the `exiftool` binary (configurable via `EXIFTOOL_BIN`); when missing, the placeholder resolves to `UNKNOWN`.
 
 ## 4. Technical Stack
 ### 4.0 Overview

@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import backend.utils as utils
 from backend.utils import auto_backup_supported, calculate_size, check_rsync_available, find_rsync, resolve_target_path
 
 
@@ -222,3 +223,49 @@ class TestResolveTargetPath:
                 template="/backup/{date}",
             )
             assert result == f"/backup/{new_dt.strftime('%Y%m%d')}"
+
+    def test_model_template_substitution(self, monkeypatch):
+        """Ensure {model} placeholder uses detected camera model."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            calls: list[frozenset[str]] = []
+
+            def fake_find(source_path, extensions, tag_order):
+                calls.append(extensions)
+                assert source_path == tmpdir
+                assert tag_order
+                if extensions is utils.IMAGE_EXTENSIONS:
+                    return "ILCE-7C"
+                pytest.fail("Video lookup should not run when image result found")
+
+            monkeypatch.setattr(utils, "_find_exif_tag", fake_find)
+
+            result = resolve_target_path(
+                uuid_value="abcd",
+                fs_label="SDCARD",
+                source_path=tmpdir,
+                template="/backup/{model}",
+            )
+            assert result == "/backup/ILCE-7C"
+            assert calls == [utils.IMAGE_EXTENSIONS]
+
+    def test_model_template_falls_back_to_video(self, monkeypatch):
+        """Ensure {model} falls back to video metadata when needed."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            calls: list[frozenset[str]] = []
+
+            def fake_find(source_path, extensions, tag_order):
+                calls.append(extensions)
+                if extensions is utils.IMAGE_EXTENSIONS:
+                    return None
+                return "FX30"
+
+            monkeypatch.setattr(utils, "_find_exif_tag", fake_find)
+
+            result = resolve_target_path(
+                uuid_value="abcd",
+                fs_label="SDCARD",
+                source_path=tmpdir,
+                template="/backup/{model}",
+            )
+            assert result == "/backup/FX30"
+            assert calls == [utils.IMAGE_EXTENSIONS, utils.VIDEO_EXTENSIONS]

@@ -9,7 +9,7 @@ Automation-friendly backups for removable media. SD Backup continuously watches 
 - **Automatic device monitoring:** `pyudev` detects supported devices, mounts them, and kicks off `rsync` with smart retry and cancellation logic.
 - **Unified backend:** FastAPI + GraphQL (`/graphql`) exposes queries, mutations, and subscriptions for real-time status updates.
 - **Rich frontends:** Choose between the terminal-native Textual dashboard, a browser UI served via `textual-serve`, or headless daemon mode.
-- **Template-driven targets:** Build destination paths with variables such as `{date}`, `{uuid}`, or `{uuid_short}`, persisted in SQLite for durability.
+- **Template-driven targets:** Build destination paths with variables such as `{date}`, `{uuid}`, `{uuid_short}`, or `{model}`, persisted in SQLite for durability.
 - **Batteries-included CLI:** `app.py` (Typer) configures logging, ports, and database paths, ensuring consistent startup on macOS and Linux.
 
 ## Architecture at a Glance
@@ -102,6 +102,10 @@ Available template variables:
 | `{hour}` / `{minute}` | Earliest modification time components. |
 | `{uuid}` | Full filesystem UUID. |
 | `{uuid_short}` | First four characters of the UUID. |
+| `{fs_label}` | Filesystem label detected by `lsblk`. |
+| `{model}` | Camera model from EXIF (`exiftool` required). |
+
+> ℹ️  Install `exiftool` and ensure it is on `PATH` (or set `EXIFTOOL_BIN`) to populate `{model}`. When missing, the placeholder falls back to `UNKNOWN`.
 
 ## GraphQL API
 

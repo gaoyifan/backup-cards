@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import os
 import platform
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MOUNT_ROOT = "/mnt"
 MOUNT_PREFIX = "sd-backup"
 MIN_TEMPLATE_TIMESTAMP = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc).timestamp()
+EXIFTOOL_BIN = os.environ.get("EXIFTOOL_BIN", "exiftool")
+IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".dng", ".hif"})
+VIDEO_EXTENSIONS = frozenset({".mp4"})
+IMAGE_FIELD_ORDER = ("ProductName", "UniqueCameraModel", "Model", "SonyModelID")
+VIDEO_FIELD_ORDER = ("Encoder", "DeviceModelName")
+_missing_exiftool_warned = False
 
 
 def find_rsync() -> str:
@@ -61,22 +69,10 @@ def calculate_size(path: Path) -> int:
 
 def resolve_target_path(uuid_value: str, fs_label: str, source_path: str, template: str) -> str:
     """Resolve target path template with device info and earliest file timestamp."""
-    earliest_mtime = None
-    try:
-        for root, _, files in os.walk(source_path):
-            for name in files:
-                try:
-                    mtime = os.path.getmtime(os.path.join(root, name))
-                    if mtime < MIN_TEMPLATE_TIMESTAMP:
-                        continue
-                    if earliest_mtime is None or mtime < earliest_mtime:
-                        earliest_mtime = mtime
-                except OSError:
-                    pass
-    except Exception as exc:
-        logger.warning("Error scanning %s for timestamps: %s", source_path, exc)
-
-    dt = datetime.datetime.fromtimestamp(earliest_mtime) if earliest_mtime else datetime.datetime.now()
+    dt = _find_earliest_timestamp(source_path)
+    model_value = _find_exif_tag(source_path, IMAGE_EXTENSIONS, IMAGE_FIELD_ORDER) or _find_exif_tag(
+        source_path, VIDEO_EXTENSIONS, VIDEO_FIELD_ORDER
+    )
     return os.path.expanduser(
         template.format(
             date=dt.strftime("%Y%m%d"),
@@ -85,6 +81,7 @@ def resolve_target_path(uuid_value: str, fs_label: str, source_path: str, templa
             uuid=uuid_value,
             uuid_short=uuid_value[:4] if len(uuid_value) >= 4 else uuid_value,
             fs_label=fs_label,
+            model=model_value or "UNKNOWN",
         )
     )
 
@@ -129,3 +126,78 @@ def unmount_device(mount_point: str) -> None:
             logger.debug("Removed temporary mount directory %s", path)
     except (OSError, FileNotFoundError):
         pass
+
+
+def _find_earliest_timestamp(source_path: str) -> datetime.datetime:
+    earliest_mtime = None
+    try:
+        for root, _, files in os.walk(source_path):
+            for name in files:
+                try:
+                    file_path = os.path.join(root, name)
+                    mtime = os.path.getmtime(file_path)
+                    if mtime < MIN_TEMPLATE_TIMESTAMP:
+                        continue
+                    if earliest_mtime is None or mtime < earliest_mtime:
+                        earliest_mtime = mtime
+                except OSError:
+                    continue
+    except Exception as exc:
+        logger.warning("Error scanning %s for timestamps: %s", source_path, exc)
+    return datetime.datetime.fromtimestamp(earliest_mtime) if earliest_mtime else datetime.datetime.now()
+
+
+def _find_exif_tag(source_path: str, extensions: frozenset[str], tag_order: tuple[str, ...]) -> str | None:
+    try:
+        for root, _, files in os.walk(source_path):
+            for name in files:
+                ext = os.path.splitext(name)[1].lower()
+                if ext not in extensions:
+                    continue
+                metadata = _read_metadata(os.path.join(root, name))
+                if not metadata:
+                    continue
+                for field in tag_order:
+                    value = metadata.get(field)
+                    if isinstance(value, list):
+                        value = value[0] if value else ""
+                    if value is None:
+                        continue
+                    text = str(value).strip().strip("\x00")
+                    if text:
+                        return text
+    except Exception as exc:  # pragma: no cover - filesystem edge cases
+        logger.debug("Error scanning %s for media metadata: %s", source_path, exc)
+    return None
+
+
+def _read_metadata(path: str) -> dict[str, Any]:
+    global _missing_exiftool_warned
+    try:
+        result = subprocess.run(
+            [EXIFTOOL_BIN, "-json", path],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        if not _missing_exiftool_warned:
+            logger.warning("exiftool binary not found; {model} template variable will remain empty.")
+            _missing_exiftool_warned = True
+        return {}
+    except subprocess.CalledProcessError as exc:  # pragma: no cover - depends on external tool
+        logger.debug("exiftool failed for %s: %s", path, exc)
+        return {}
+
+    try:
+        parsed = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:  # pragma: no cover - malformed tool output
+        logger.debug("Failed to parse exiftool output for %s", path)
+        return {}
+
+    if isinstance(parsed, list) and parsed:
+        first = parsed[0]
+        if isinstance(first, dict):
+            return first
+
+    return {}
