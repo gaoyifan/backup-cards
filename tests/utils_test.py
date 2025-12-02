@@ -202,27 +202,23 @@ class TestResolveTargetPath:
             )
             assert result == "/backup/AB"
 
-    def test_date_ignores_pre_2020_timestamps(self):
-        """Ensure {date} skips obviously invalid pre-2020 mtimes."""
+    def test_date_falls_back_to_now_when_only_pre_1980(self):
+        """Ensure {date} ignores files before 1980."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            old_file = Path(tmpdir) / "old.txt"
-            old_file.write_text("old")
-            old_ts = datetime.datetime(2019, 6, 1, tzinfo=datetime.timezone.utc).timestamp()
-            os.utime(old_file, (old_ts, old_ts))
+            ancient = Path(tmpdir) / "ancient.txt"
+            ancient.write_text("old")
+            old_ts = datetime.datetime(1975, 1, 1, tzinfo=datetime.timezone.utc).timestamp()
+            os.utime(ancient, (old_ts, old_ts))
 
-            new_file = Path(tmpdir) / "new.txt"
-            new_file.write_text("new")
-            new_dt = datetime.datetime(2021, 3, 15, tzinfo=datetime.timezone.utc)
-            new_ts = new_dt.timestamp()
-            os.utime(new_file, (new_ts, new_ts))
-
+            before = datetime.datetime.now().strftime("%Y%m%d")
             result = resolve_target_path(
                 uuid_value="abcd",
                 fs_label="SD",
                 source_path=tmpdir,
                 template="/backup/{date}",
             )
-            assert result == f"/backup/{new_dt.strftime('%Y%m%d')}"
+            after = datetime.datetime.now().strftime("%Y%m%d")
+            assert result in (f"/backup/{before}", f"/backup/{after}")
 
     def test_model_template_substitution(self, monkeypatch):
         """Ensure {model} placeholder uses detected camera model."""
@@ -269,3 +265,50 @@ class TestResolveTargetPath:
             )
             assert result == "/backup/FX30"
             assert calls == [utils.IMAGE_EXTENSIONS, utils.VIDEO_EXTENSIONS]
+
+
+class TestFindEarliestTimestamp:
+    def _write_with_mtime(self, path: Path, dt: datetime.datetime) -> None:
+        path.write_text("data")
+        ts = dt.timestamp()
+        os.utime(path, (ts, ts))
+
+    def test_prefers_within_one_year(self, tmp_path):
+        now = datetime.datetime(2030, 1, 1, tzinfo=datetime.timezone.utc)
+        recent = now - datetime.timedelta(days=30)
+        older = now - datetime.timedelta(days=400)
+        self._write_with_mtime(tmp_path / "recent.dat", recent)
+        self._write_with_mtime(tmp_path / "older.dat", older)
+
+        result = utils._find_earliest_timestamp(tmp_path.as_posix(), now=now)
+        assert result.strftime("%Y%m%d") == recent.strftime("%Y%m%d")
+
+    def test_falls_back_to_five_year_window(self, tmp_path):
+        now = datetime.datetime(2030, 1, 1, tzinfo=datetime.timezone.utc)
+        three_years = now - datetime.timedelta(days=3 * 365)
+        six_years = now - datetime.timedelta(days=6 * 365)
+        self._write_with_mtime(tmp_path / "three.dat", three_years)
+        self._write_with_mtime(tmp_path / "six.dat", six_years)
+
+        result = utils._find_earliest_timestamp(tmp_path.as_posix(), now=now)
+        assert result.strftime("%Y%m%d") == three_years.strftime("%Y%m%d")
+
+    def test_falls_back_to_post_1980(self, tmp_path):
+        now = datetime.datetime(2030, 1, 1, tzinfo=datetime.timezone.utc)
+        old = datetime.datetime(1990, 5, 1, tzinfo=datetime.timezone.utc)
+        older = datetime.datetime(1985, 7, 1, tzinfo=datetime.timezone.utc)
+        very_old = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+        self._write_with_mtime(tmp_path / "old.dat", old)
+        self._write_with_mtime(tmp_path / "older.dat", older)
+        self._write_with_mtime(tmp_path / "very_old.dat", very_old)
+
+        result = utils._find_earliest_timestamp(tmp_path.as_posix(), now=now)
+        assert result.strftime("%Y%m%d") == older.strftime("%Y%m%d")
+
+    def test_returns_now_when_no_valid_files(self, tmp_path):
+        now = datetime.datetime(2030, 1, 1, tzinfo=datetime.timezone.utc)
+        very_old = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+        self._write_with_mtime(tmp_path / "very_old.dat", very_old)
+
+        result = utils._find_earliest_timestamp(tmp_path.as_posix(), now=now)
+        assert result == now

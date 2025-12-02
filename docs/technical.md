@@ -131,7 +131,7 @@ The SD Backup Tool is a Python application designed to automatically back up sto
 
 The following variables can be used in `target_path_template`:
 
-- `{date}` - Date in YYYYMMDD format (earliest file mtime on/after 2020-01-01)
+- `{date}` - Date in YYYYMMDD format (prefers files within 1 year, then 5 years, then ≥1980)
 - `{hour}` - Hour in HH format (earliest file mtime)
 - `{minute}` - Minute in MM format (earliest file mtime)
 - `{uuid}` - Filesystem UUID

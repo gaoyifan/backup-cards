@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MOUNT_ROOT = "/mnt"
 MOUNT_PREFIX = "sd-backup"
-MIN_TEMPLATE_TIMESTAMP = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc).timestamp()
 EXIFTOOL_BIN = os.environ.get("EXIFTOOL_BIN", "exiftool")
 IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".dng", ".hif"})
 VIDEO_EXTENSIONS = frozenset({".mp4"})
@@ -128,23 +127,38 @@ def unmount_device(mount_point: str) -> None:
         pass
 
 
-def _find_earliest_timestamp(source_path: str) -> datetime.datetime:
-    earliest_mtime = None
+def _find_earliest_timestamp(source_path: str, *, now: datetime.datetime | None = None) -> datetime.datetime:
+    """Pick the earliest mtime preferring files from the last year, then five years, then ≥1980."""
+    now = now or datetime.datetime.now()
+    tzinfo = now.tzinfo
+    one_year_ago = now - datetime.timedelta(days=365)
+    five_years_ago = now - datetime.timedelta(days=5 * 365)
+    baseline = datetime.datetime(1980, 1, 1, tzinfo=tzinfo)
+
+    mtimes: list[float] = []
     try:
         for root, _, files in os.walk(source_path):
             for name in files:
                 try:
-                    file_path = os.path.join(root, name)
-                    mtime = os.path.getmtime(file_path)
-                    if mtime < MIN_TEMPLATE_TIMESTAMP:
-                        continue
-                    if earliest_mtime is None or mtime < earliest_mtime:
-                        earliest_mtime = mtime
+                    mtimes.append(os.path.getmtime(os.path.join(root, name)))
                 except OSError:
                     continue
     except Exception as exc:
         logger.warning("Error scanning %s for timestamps: %s", source_path, exc)
-    return datetime.datetime.fromtimestamp(earliest_mtime) if earliest_mtime else datetime.datetime.now()
+    if not mtimes:
+        return now
+
+    mtimes.sort()
+    thresholds = (
+        (one_year_ago.timestamp(), float("inf")),
+        (five_years_ago.timestamp(), one_year_ago.timestamp()),
+        (baseline.timestamp(), five_years_ago.timestamp()),
+    )
+    for lower, upper in thresholds:
+        candidate = next((ts for ts in mtimes if lower <= ts < upper), None)
+        if candidate is not None:
+            return datetime.datetime.fromtimestamp(candidate, tz=tzinfo)
+    return now
 
 
 def _find_exif_tag(source_path: str, extensions: frozenset[str], tag_order: tuple[str, ...]) -> str | None:

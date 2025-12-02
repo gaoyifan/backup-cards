@@ -32,7 +32,7 @@ Configurable via CLI.
 #### Template Variables
 The system supports dynamic target path generation using the following variables:
 
-*   `{date}`: The date (`YYYYMMDD`) derived from the earliest modification time on or after 2020-01-01 (fallback: current date if none).
+*   `{date}`: The date (`YYYYMMDD`) derived from the earliest modification time within the last year, else within five years, else after 1980 (fallback: current date if none).
 *   `{hour}`: The hour (`HH`) derived from the earliest modification time.
 *   `{minute}`: The minute (`MM`) derived from the earliest modification time.
 *   `{uuid}`: The full filesystem UUID of the device.
