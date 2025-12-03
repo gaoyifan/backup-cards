@@ -6,8 +6,9 @@ import asyncio
 import logging
 
 from textual import containers, on
+from textual.events import Click
 from textual.app import ComposeResult
-from textual.widgets import Button, Footer, Input, Label, Markdown, Rule, Switch
+from textual.widgets import Button, Footer, Input, Label, Markdown, Rule, Static, Switch
 
 from frontend.page import PageScreen
 
@@ -108,11 +109,11 @@ class PatternListEditor(containers.VerticalGroup):
         .empty-message { color: $text-muted; text-style: italic; }
         
         .pattern-remove-btn {
-            min-width: 3;
-            background: transparent;
-            border: none;
-            color: $error;
+            width: 3;
+            color: $text-muted;
+            text-align: center;
         }
+        .pattern-remove-btn:hover { color: $error; }
     }
     """
 
@@ -166,7 +167,7 @@ class PatternListEditor(containers.VerticalGroup):
         item = containers.HorizontalGroup(classes="pattern-item")
         item.compose_add_child(Label(f"  {pattern}", classes="pattern-text"))
         encoded_pattern = _encode_pattern_token(pattern)
-        item.compose_add_child(Button("✕", classes="pattern-remove-btn", id=f"remove-{self._pattern_id}-{encoded_pattern}"))
+        item.compose_add_child(Static("✕", classes="pattern-remove-btn", id=f"remove-{self._pattern_id}-{encoded_pattern}"))
         return item
 
     def _refresh_list(self) -> None:
@@ -511,13 +512,14 @@ class SettingsScreen(PageScreen):
         elif input_field.value.strip():
             self.notify("Pattern already exists", severity="warning")
 
-    @on(Button.Pressed, ".pattern-remove-btn")
-    def on_pattern_remove_pressed(self, event: Button.Pressed) -> None:
+    @on(Click, ".pattern-remove-btn")
+    def on_pattern_remove_clicked(self, event: Click) -> None:
         """Handle removing a pattern from include or exclude list."""
-        button_id = event.button.id or ""
+        widget = event.widget
+        widget_id = widget.id or ""
         for prefix in ("remove-include-patterns-", "remove-exclude-patterns-"):
-            if button_id.startswith(prefix):
-                token = button_id[len(prefix) :]
+            if widget_id.startswith(prefix):
+                token = widget_id[len(prefix) :]
                 pattern = _decode_pattern_token(token)
                 if pattern is None:
                     return
