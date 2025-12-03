@@ -14,6 +14,20 @@ from frontend.page import PageScreen
 logger = logging.getLogger(__name__)
 
 
+def _encode_pattern_token(pattern: str) -> str:
+    """Encode a pattern into a hex-only token safe for Textual IDs."""
+    return pattern.encode("utf-8").hex()
+
+
+def _decode_pattern_token(token: str) -> str | None:
+    """Decode a previously encoded pattern token."""
+    try:
+        return bytes.fromhex(token).decode("utf-8")
+    except ValueError:
+        logger.warning("Invalid pattern token: %s", token)
+        return None
+
+
 SETTINGS_MD = """\
 # ⚙️  Settings
 
@@ -151,7 +165,8 @@ class PatternListEditor(containers.VerticalGroup):
         """Create a pattern item widget with remove button."""
         item = containers.HorizontalGroup(classes="pattern-item")
         item.compose_add_child(Label(f"  {pattern}", classes="pattern-text"))
-        item.compose_add_child(Button("✕", classes="pattern-remove-btn", id=f"remove-{self._pattern_id}-{pattern}"))
+        encoded_pattern = _encode_pattern_token(pattern)
+        item.compose_add_child(Button("✕", classes="pattern-remove-btn", id=f"remove-{self._pattern_id}-{encoded_pattern}"))
         return item
 
     def _refresh_list(self) -> None:
@@ -502,7 +517,10 @@ class SettingsScreen(PageScreen):
         button_id = event.button.id or ""
         for prefix in ("remove-include-patterns-", "remove-exclude-patterns-"):
             if button_id.startswith(prefix):
-                pattern = button_id[len(prefix) :]
+                token = button_id[len(prefix) :]
+                pattern = _decode_pattern_token(token)
+                if pattern is None:
+                    return
                 editor_id = "#" + prefix.replace("remove-", "").rstrip("-") + "-editor"
                 self.query_one(editor_id, PatternListEditor).remove_pattern(pattern)
                 break
