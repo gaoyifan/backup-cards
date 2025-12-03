@@ -6,7 +6,7 @@ import asyncio
 import logging
 
 from textual import containers, on
-from textual.events import Click
+from textual.events import Click, Enter, Leave
 from textual.app import ComposeResult
 from textual.widgets import Button, Footer, Input, Label, Markdown, Rule, Static, Switch
 
@@ -88,6 +88,16 @@ If you want to only backup certain files, add them to includes and add `*` to ex
 """
 
 
+class PatternItem(containers.HorizontalGroup):
+    """A pattern item row that highlights on hover."""
+
+    def on_enter(self, event: Enter) -> None:
+        self.add_class("--hovered")
+
+    def on_leave(self, event: Leave) -> None:
+        self.remove_class("--hovered")
+
+
 class PatternListEditor(containers.VerticalGroup):
     """Editable list of rsync patterns (for include/exclude rules)."""
 
@@ -113,7 +123,8 @@ class PatternListEditor(containers.VerticalGroup):
             color: $text-muted;
             text-align: center;
         }
-        .pattern-remove-btn:hover { color: $error; }
+        .pattern-item.--hovered .pattern-text { color: $error; }
+        .pattern-item.--hovered .pattern-remove-btn { color: $error; }
     }
     """
 
@@ -162,9 +173,9 @@ class PatternListEditor(containers.VerticalGroup):
         self._refresh_list()
         return True
 
-    def _create_pattern_item(self, pattern: str) -> containers.HorizontalGroup:
+    def _create_pattern_item(self, pattern: str) -> PatternItem:
         """Create a pattern item widget with remove button."""
-        item = containers.HorizontalGroup(classes="pattern-item")
+        item = PatternItem(classes="pattern-item")
         item.compose_add_child(Label(f"  {pattern}", classes="pattern-text"))
         encoded_pattern = _encode_pattern_token(pattern)
         item.compose_add_child(Static("✕", classes="pattern-remove-btn", id=f"remove-{self._pattern_id}-{encoded_pattern}"))
