@@ -260,7 +260,6 @@ class BackupManager:
                 rsync_bin,
                 "-a",
                 "--stats",
-                "--bwlimit=3m",
                 "--info=progress2",
             ]
             # Add include patterns first (rsync processes rules in order)
