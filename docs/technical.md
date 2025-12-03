@@ -136,9 +136,9 @@ The following variables can be used in `target_path_template`:
 - `{minute}` - Minute in MM format (earliest file mtime)
 - `{uuid}` - Filesystem UUID
 - `{uuid_short}` - First 4 characters of UUID
-- `{model}` - Camera model parsed via `exiftool` (images first, then videos)
+- `{model}` - Camera model parsed via `exiftool` (images first, then videos; spaces replaced with `-`)
 
-> `{model}` requires the `exiftool` binary on `PATH` (override via `EXIFTOOL_BIN`). When unavailable, the placeholder resolves to `UNKNOWN`.
+> `{model}` requires the `exiftool` binary on `PATH` (override via `EXIFTOOL_BIN`). When unavailable, the placeholder resolves to `UNKNOWN`. Any embedded spaces are converted to `-`.
 
 ## Device Matching Logic
 

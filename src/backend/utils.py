@@ -69,9 +69,10 @@ def calculate_size(path: Path) -> int:
 def resolve_target_path(uuid_value: str, fs_label: str, source_path: str, template: str) -> str:
     """Resolve target path template with device info and earliest file timestamp."""
     dt = _find_earliest_timestamp(source_path)
-    model_value = _find_exif_tag(source_path, IMAGE_EXTENSIONS, IMAGE_FIELD_ORDER) or _find_exif_tag(
+    raw_model_value = _find_exif_tag(source_path, IMAGE_EXTENSIONS, IMAGE_FIELD_ORDER) or _find_exif_tag(
         source_path, VIDEO_EXTENSIONS, VIDEO_FIELD_ORDER
     )
+    model_value = _normalize_model_value(raw_model_value)
     return os.path.expanduser(
         template.format(
             date=dt.strftime("%Y%m%d"),
@@ -80,7 +81,7 @@ def resolve_target_path(uuid_value: str, fs_label: str, source_path: str, templa
             uuid=uuid_value,
             uuid_short=uuid_value[:4] if len(uuid_value) >= 4 else uuid_value,
             fs_label=fs_label,
-            model=model_value or "UNKNOWN",
+            model=model_value,
         )
     )
 
@@ -183,6 +184,14 @@ def _find_exif_tag(source_path: str, extensions: frozenset[str], tag_order: tupl
     except Exception as exc:  # pragma: no cover - filesystem edge cases
         logger.debug("Error scanning %s for media metadata: %s", source_path, exc)
     return None
+
+
+def _normalize_model_value(value: str | None) -> str:
+    """Return a filesystem-friendly model placeholder."""
+    if not value:
+        return "UNKNOWN"
+    sanitized = value.replace(" ", "-")
+    return sanitized or "UNKNOWN"
 
 
 def _read_metadata(path: str) -> dict[str, Any]:

@@ -103,7 +103,7 @@ Available template variables:
 | `{uuid}` | Full filesystem UUID. |
 | `{uuid_short}` | First four characters of the UUID. |
 | `{fs_label}` | Filesystem label detected by `lsblk`. |
-| `{model}` | Camera model from EXIF (`exiftool` required). |
+| `{model}` | Camera model from EXIF (`exiftool` required, spaces → `-`). |
 
 > ℹ️  Install `exiftool` and ensure it is on `PATH` (or set `EXIFTOOL_BIN`) to populate `{model}`. When missing, the placeholder falls back to `UNKNOWN`.
 

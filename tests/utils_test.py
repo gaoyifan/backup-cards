@@ -230,7 +230,7 @@ class TestResolveTargetPath:
                 assert source_path == tmpdir
                 assert tag_order
                 if extensions is utils.IMAGE_EXTENSIONS:
-                    return "ILCE-7C"
+                    return "Alpha 7 C"
                 pytest.fail("Video lookup should not run when image result found")
 
             monkeypatch.setattr(utils, "_find_exif_tag", fake_find)
@@ -241,7 +241,7 @@ class TestResolveTargetPath:
                 source_path=tmpdir,
                 template="/backup/{model}",
             )
-            assert result == "/backup/ILCE-7C"
+            assert result == "/backup/Alpha-7-C"
             assert calls == [utils.IMAGE_EXTENSIONS]
 
     def test_model_template_falls_back_to_video(self, monkeypatch):
